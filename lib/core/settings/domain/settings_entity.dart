@@ -49,7 +49,10 @@ enum Language {
   german('de', 'DE', 'Deutsch'),
   italian('it', 'IT', 'Italiano'),
   portuguese('pt', 'PT', 'Português'),
-  simplifiedChinese('zh', 'CN', '简体中文');
+  simplifiedChinese('zh', 'CN', '简体中文'),
+  hindi('hi', 'IN', 'हिंदी'),
+  bengali('bn', 'IN', 'বাংলা'),
+  assamese('as', 'IN', 'অসমীয়া');
 
   final String languageCode;
   final String? countryCode;

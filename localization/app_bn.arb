@@ -1,0 +1,389 @@
+{
+  "@@locale": "bn",
+  "translationWarningTitle": "AI-জেনারেটেড অনুবাদ",
+  "translationWarningDescription": "এই অ্যাপের বেশিরভাগ অনুবাদ AI দ্বারা তৈরি এবং এতে ভুল থাকতে পারে। আপনি যদি কোনো ভুল লক্ষ্য করেন বা অনুবাদ উন্নত করতে চান, তাহলে আমাদের কমিউনিটি অনুবাদ প্ল্যাটফর্মে অবদান রাখতে পারেন।",
+  "translationWarningContributeButton": "অনুবাদ উন্নত করতে সাহায্য করুন",
+  "translationWarningDismissButton": "বুঝলাম",
+  "durationSeconds": "{seconds} সেকেন্ড",
+  "@durationSeconds": {
+    "placeholders": {
+      "seconds": {
+        "type": "String"
+      }
+    }
+  },
+  "durationMinute": "{minutes} মিনিট",
+  "@durationMinute": {
+    "placeholders": {
+      "minutes": {
+        "type": "String"
+      }
+    }
+  },
+  "durationMinutes": "{minutes} মিনিট",
+  "@durationMinutes": {
+    "placeholders": {
+      "minutes": {
+        "type": "String"
+      }
+    }
+  },
+  "coreSwapsStatusPending": "মুলতুবি",
+  "coreSwapsStatusInProgress": "চলমান",
+  "coreSwapsStatusCompleted": "সম্পন্ন",
+  "coreSwapsStatusExpired": "মেয়াদোত্তীর্ণ",
+  "coreSwapsStatusFailed": "ব্যর্থ",
+  "coreSwapsActionClaim": "দাবি করুন",
+  "coreSwapsActionClose": "বন্ধ করুন",
+  "coreSwapsActionRefund": "ফেরত",
+  "coreSwapsLnReceivePending": "Swap এখনো শুরু হয়নি।",
+  "coreSwapsLnReceivePaid": "প্রেরক ইনভয়েস পরিশোধ করেছেন।",
+  "coreSwapsLnReceiveClaimable": "Swap দাবি করার জন্য প্রস্তুত।",
+  "coreSwapsLnReceiveRefundable": "Swap ফেরত দেওয়ার জন্য প্রস্তুত।",
+  "coreSwapsLnReceiveCanCoop": "Swap এখনই সম্পন্ন হবে।",
+  "coreSwapsLnReceiveCompleted": "Swap সম্পন্ন হয়েছে।",
+  "coreSwapsLnReceiveExpired": "Swap মেয়াদোত্তীর্ণ।",
+  "coreSwapsLnReceiveFailed": "Swap ব্যর্থ হয়েছে।",
+  "coreSwapsLnSendPending": "Swap এখনো শুরু হয়নি।",
+  "coreSwapsLnSendPaid": "আপনার পেমেন্ট নিশ্চিত হওয়ার পরে ইনভয়েস পরিশোধ হবে।",
+  "coreSwapsLnSendClaimable": "Swap দাবি করার জন্য প্রস্তুত।",
+  "coreSwapsLnSendRefundable": "Swap ফেরত দেওয়ার জন্য প্রস্তুত।",
+  "coreSwapsLnSendCanCoop": "Swap এখনই সম্পন্ন হবে।",
+  "coreSwapsLnSendCompletedRefunded": "Swap ফেরত দেওয়া হয়েছে।",
+  "coreSwapsLnSendCompletedSuccess": "Swap সফলভাবে সম্পন্ন হয়েছে।",
+  "coreSwapsLnSendExpired": "Swap মেয়াদোত্তীর্ণ",
+  "coreSwapsLnSendFailedRefunding": "Swap শীঘ্রই ফেরত দেওয়া হবে।",
+  "coreSwapsLnSendFailed": "Swap ব্যর্থ হয়েছে।",
+  "coreSwapsChainPending": "ট্রান্সফার এখনো শুরু হয়নি।",
+  "coreSwapsChainPaid": "ট্রান্সফার প্রদানকারীর পেমেন্ট নিশ্চিতের জন্য অপেক্ষা করা হচ্ছে। এটি সম্পন্ন হতে কিছু সময় লাগতে পারে।",
+  "coreSwapsChainClaimable": "ট্রান্সফার দাবি করার জন্য প্রস্তুত।",
+  "coreSwapsChainRefundable": "ট্রান্সফার ফেরত দেওয়ার জন্য প্রস্তুত।",
+  "coreSwapsChainCanCoop": "ট্রান্সফার এখনই সম্পন্ন হবে।",
+  "coreSwapsChainCompletedRefunded": "ট্রান্সফার ফেরত দেওয়া হয়েছে।",
+  "coreSwapsChainCompletedSuccess": "ট্রান্সফার সফলভাবে সম্পন্ন হয়েছে।",
+  "coreSwapsChainExpired": "ট্রান্সফার মেয়াদোত্তীর্ণ",
+  "coreSwapsChainFailedRefunding": "ট্রান্সফার শীঘ্রই ফেরত দেওয়া হবে।",
+  "coreSwapsChainFailed": "ট্রান্সফার ব্যর্থ হয়েছে।",
+  "coreWalletTransactionStatusPending": "মুলতুবি",
+  "coreWalletTransactionStatusConfirmed": "নিশ্চিত",
+  "onboardingScreenTitle": "স্বাগতম",
+  "onboardingCreateWalletButtonLabel": "ওয়ালেট তৈরি করুন",
+  "onboardingRecoverWalletButtonLabel": "ওয়ালেট পুনরুদ্ধার করুন",
+  "settingsScreenTitle": "সেটিংস",
+  "testnetModeSettingsLabel": "Testnet মোড",
+  "satsBitcoinUnitSettingsLabel": "sats-এ প্রদর্শন করুন",
+  "pinCodeSettingsLabel": "PIN কোড",
+  "languageSettingsLabel": "ভাষা",
+  "backupSettingsLabel": "ওয়ালেট ব্যাকআপ",
+  "electrumServerSettingsLabel": "Electrum সার্ভার (Bitcoin নোড)",
+  "fiatCurrencySettingsLabel": "ফিয়াট মুদ্রা",
+  "languageSettingsScreenTitle": "ভাষা",
+  "backupSettingsScreenTitle": "ব্যাকআপ সেটিংস",
+  "settingsExchangeSettingsTitle": "এক্সচেঞ্জ সেটিংস",
+  "settingsWalletBackupTitle": "ওয়ালেট ব্যাকআপ",
+  "settingsBitcoinSettingsTitle": "Bitcoin সেটিংস",
+  "settingsSecurityPinTitle": "নিরাপত্তা PIN",
+  "pinCodeAuthentication": "প্রমাণীকরণ",
+  "pinCodeCreateTitle": "নতুন PIN তৈরি করুন",
+  "pinCodeCreateDescription": "আপনার PIN আপনার ওয়ালেট এবং সেটিংসে প্রবেশ সুরক্ষিত করে। এটি মনে রাখার মতো রাখুন।",
+  "pinCodeMinLengthError": "PIN কমপক্ষে {minLength} সংখ্যা দীর্ঘ হতে হবে",
+  "@pinCodeMinLengthError": {
+    "placeholders": {
+      "minLength": {
+        "type": "String"
+      }
+    }
+  },
+  "pinCodeConfirmTitle": "নতুন PIN নিশ্চিত করুন",
+  "pinCodeMismatchError": "PIN মেলে না",
+  "pinCodeSecurityPinTitle": "নিরাপত্তা PIN",
+  "pinCodeManageTitle": "আপনার নিরাপত্তা PIN পরিচালনা করুন",
+  "pinCodeChangeButton": "PIN পরিবর্তন করুন",
+  "pinCodeCreateButton": "PIN তৈরি করুন",
+  "pinCodeRemoveButton": "নিরাপত্তা PIN সরান",
+  "pinCodeContinue": "অব্যাহত রাখুন",
+  "pinCodeConfirm": "নিশ্চিত করুন",
+  "pinCodeLoading": "লোড হচ্ছে",
+  "pinCodeCheckingStatus": "PIN স্ট্যাটাস যাচাই করা হচ্ছে",
+  "pinCodeProcessing": "প্রক্রিয়াকরণ",
+  "pinCodeSettingUp": "আপনার PIN কোড সেট আপ করা হচ্ছে",
+  "settingsCurrencyTitle": "মুদ্রা",
+  "settingsAppSettingsTitle": "অ্যাপ সেটিংস",
+  "settingsTermsOfServiceTitle": "সেবার শর্তাবলী",
+  "settingsAppVersionLabel": "অ্যাপ সংস্করণ: ",
+  "settingsTelegramLabel": "Telegram",
+  "settingsGithubLabel": "Github",
+  "settingsServicesStatusTitle": "সেবার স্ট্যাটাস",
+  "settingsTorSettingsTitle": "Tor সেটিংস",
+  "settingsRecoverbullTitle": "Recoverbull",
+  "settingsLanguageTitle": "ভাষা",
+  "settingsThemeTitle": "থিম",
+  "settingsArkTitle": "Ark",
+  "settingsDevModeWarningTitle": "ডেভ মোড",
+  "settingsDevModeWarningMessage": "এই মোডটি ঝুঁকিপূর্ণ। এটি সক্রিয় করে আপনি স্বীকার করছেন যে আপনি অর্থ হারাতে পারেন",
+  "settingsDevModeUnderstandButton": "আমি বুঝলাম",
+  "settingsSuperuserModeDisabledMessage": "Superuser মোড নিষ্ক্রিয় করা হয়েছে।",
+  "settingsSuperuserModeUnlockedMessage": "Superuser মোড আনলক করা হয়েছে!",
+  "walletOptionsUnnamedWalletFallback": "নামহীন ওয়ালেট",
+  "walletOptionsNotFoundMessage": "ওয়ালেট পাওয়া যায়নি",
+  "walletOptionsWalletDetailsTitle": "ওয়ালেট বিবরণ",
+  "addressViewAddressesTitle": "ঠিকানাসমূহ",
+  "walletDetailsDeletingMessage": "ওয়ালেট মুছে ফেলা হচ্ছে...",
+  "walletDetailsWalletFingerprintLabel": "ওয়ালেট ফিঙ্গারপ্রিন্ট",
+  "walletDetailsPubkeyLabel": "Pubkey",
+  "walletDetailsDescriptorLabel": "ডেসক্রিপ্টর",
+  "walletDetailsAddressTypeLabel": "ঠিকানার ধরন",
+  "walletDetailsNetworkLabel": "নেটওয়ার্ক",
+  "walletDetailsDerivationPathLabel": "ডেরিভেশন পাথ",
+  "walletDetailsSignerLabel": "স্বাক্ষরকারী",
+  "walletDetailsSignerDeviceLabel": "স্বাক্ষরকারী ডিভাইস",
+  "walletDetailsSignerDeviceNotSupported": "সমর্থিত নয়",
+  "walletDetailsCopyButton": "কপি করুন",
+  "bitcoinSettingsWalletsTitle": "ওয়ালেটসমূহ",
+  "bitcoinSettingsElectrumServerTitle": "Electrum সার্ভার সেটিংস",
+  "bitcoinSettingsMempoolServerTitle": "Mempool সার্ভার সেটিংস",
+  "mempoolSettingsTitle": "Mempool সার্ভার",
+  "mempoolSettingsDescription": "বিভিন্ন নেটওয়ার্কের জন্য কাস্টম Mempool সার্ভার কনফিগার করুন। প্রতিটি নেটওয়ার্ক ব্লক এক্সপ্লোরার এবং ফি অনুমানের জন্য নিজস্ব সার্ভার ব্যবহার করতে পারে।",
+  "mempoolSettingsDefaultServer": "ডিফল্ট সার্ভার",
+  "mempoolSettingsCustomServer": "কাস্টম সার্ভার",
+  "mempoolNetworkBitcoinMainnet": "Bitcoin Mainnet",
+  "mempoolNetworkBitcoinTestnet": "Bitcoin Testnet",
+  "mempoolNetworkLiquidMainnet": "Liquid Mainnet",
+  "mempoolNetworkLiquidTestnet": "Liquid Testnet",
+  "mempoolCustomServerAdd": "কাস্টম সার্ভার যোগ করুন",
+  "mempoolCustomServerEdit": "সম্পাদনা করুন",
+  "mempoolCustomServerDelete": "মুছুন",
+  "mempoolCustomServerLabel": "কাস্টম",
+  "mempoolServerNotUsed": "ব্যবহার হচ্ছে না (কাস্টম সার্ভার সক্রিয়)",
+  "mempoolCustomServerDeleteTitle": "কাস্টম সার্ভার মুছবেন?",
+  "mempoolCustomServerDeleteMessage": "আপনি কি নিশ্চিতভাবে এই কাস্টম Mempool সার্ভার মুছতে চান? পরিবর্তে ডিফল্ট সার্ভার ব্যবহার করা হবে।",
+  "mempoolCustomServerUrl": "সার্ভার URL",
+  "mempoolCustomServerUrlEmpty": "অনুগ্রহ করে একটি সার্ভার URL প্রবেশ করুন",
+  "mempoolCustomServerSaveSuccess": "কাস্টম সার্ভার সফলভাবে সংরক্ষিত হয়েছে",
+  "mempoolCustomServerBottomSheetDescription": "আপনার কাস্টম Mempool সার্ভারের URL প্রবেশ করুন। সংরক্ষণের আগে সার্ভার যাচাই করা হবে।",
+  "mempoolSettingsUseForFeeEstimation": "ফি অনুমানের জন্য ব্যবহার করুন",
+  "mempoolSettingsUseForFeeEstimationDescription": "সক্রিয় থাকলে, এই সার্ভার ফি অনুমানের জন্য ব্যবহার করা হবে। নিষ্ক্রিয় থাকলে, Bull Bitcoin-এর Mempool সার্ভার ব্যবহার করা হবে।",
+  "mempoolServerStatusOnline": "অনলাইন",
+  "mempoolServerStatusOffline": "অফলাইন",
+  "mempoolServerStatusChecking": "যাচাই করা হচ্ছে...",
+  "mempoolServerStatusUnknown": "অজানা",
+  "mempoolCustomServerSaveFailed": "সার্ভার সংরক্ষণ ব্যর্থ হয়েছে",
+  "mempoolCustomServerInfoDescription": "Mempool সার্ভার ফি অনুমান এবং লেনদেন বিবরণ দেখার সময় ব্লক এক্সপ্লোরার খোলার জন্য ব্যবহার করা হয়।",
+  "mempoolCustomServerUseSsl": "SSL ব্যবহার করুন",
+  "mempoolCustomServerSslAutoDetected": "(স্বয়ংক্রিয়ভাবে সনাক্ত করা হয়েছে)",
+  "mempoolCustomServerSslHelpText": "লোকাল (.local, প্রাইভেট IP) এবং Tor (.onion) সার্ভারের জন্য SSL সাধারণত নিষ্ক্রিয় থাকে। পাবলিক IP এবং ডোমেইনে SSL ব্যবহার করা উচিত।",
+  "mempoolErrorSameAsDefault": "এই URL ডিফল্ট সার্ভারের মতো। অনুগ্রহ করে একটি ভিন্ন URL ব্যবহার করুন।",
+  "mempoolErrorConnectionTimeout": "সংযোগের সময় শেষ হয়ে গেছে। সার্ভার ধীর বা অপ্রাপ্য হতে পারে।",
+  "mempoolErrorHostNotFound": "এই সার্ভার খুঁজে পাওয়া যাচ্ছে না। অনুগ্রহ করে URL যাচাই করুন এবং আবার চেষ্টা করুন।",
+  "mempoolErrorTorNotRunning": ".onion ঠিকানায় পৌঁছানো যাচ্ছে না। নিশ্চিত করুন Tor/Orbot চালু আছে এবং আবার চেষ্টা করুন।",
+  "mempoolErrorConnectionFailed": "সার্ভারে সংযোগ করা যাচ্ছে না। আপনার নেটওয়ার্ক সংযোগ যাচাই করুন এবং আবার চেষ্টা করুন।",
+  "mempoolErrorNotMempoolServer": "এই URL একটি Mempool সার্ভার বলে মনে হচ্ছে না। অনুগ্রহ করে ঠিকানা যাচাই করুন।",
+  "mempoolErrorServerUnavailable": "সার্ভার অনুপলব্ধ। অনুগ্রহ করে পরে আবার চেষ্টা করুন।",
+  "mempoolErrorServerError": "সার্ভারে ত্রুটি ঘটেছে। অনুগ্রহ করে পরে আবার চেষ্টা করুন।",
+  "mempoolErrorInvalidResponse": "সার্ভার একটি অবৈধ প্রতিক্রিয়া দিয়েছে।",
+  "mempoolErrorUnexpected": "একটি অপ্রত্যাশিত ত্রুটি ঘটেছে",
+  "mempoolErrorSaveServerFailed": "সার্ভার সংরক্ষণ ব্যর্থ হয়েছে: {error}",
+  "@mempoolErrorSaveServerFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "mempoolErrorLoadFailed": "Mempool সার্ভার ডেটা লোড ব্যর্থ হয়েছে: {error}",
+  "@mempoolErrorLoadFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "mempoolErrorDeleteFailed": "কাস্টম সার্ভার মুছে ফেলতে ব্যর্থ হয়েছে: {error}",
+  "@mempoolErrorDeleteFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "mempoolErrorUpdateSettingsFailed": "সেটিংস আপডেট ব্যর্থ হয়েছে: {error}",
+  "@mempoolErrorUpdateSettingsFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "bitcoinSettingsAutoTransferTitle": "অটো ট্রান্সফার সেটিংস",
+  "bitcoinSettingsLegacySeedsTitle": "লেগাসি সিডসমূহ",
+  "bitcoinSettingsImportWalletTitle": "ওয়ালেট আমদানি করুন",
+  "bitcoinSettingsBroadcastTransactionTitle": "লেনদেন ব্রডকাস্ট করুন",
+  "bitcoinSettingsTestnetModeTitle": "Testnet মোড",
+  "bitcoinSettingsBip85EntropiesTitle": "BIP85 ডিটারমিনিস্টিক এন্ট্রপি",
+  "logSettingsLogsTitle": "লগসমূহ",
+  "logSettingsErrorLoadingMessage": "লগ লোড করতে ত্রুটি: ",
+  "appSettingsDevModeTitle": "ডেভ মোড",
+  "currencySettingsDefaultFiatCurrencyLabel": "ডিফল্ট ফিয়াট মুদ্রা",
+  "exchangeSettingsAccountInformationTitle": "অ্যাকাউন্ট তথ্য",
+  "exchangeSettingsSecuritySettingsTitle": "নিরাপত্তা সেটিংস",
+  "exchangeSettingsReferralsTitle": "রেফারেলসমূহ",
+  "exchangeSettingsLogInTitle": "লগ ইন",
+  "exchangeSettingsLogOutTitle": "লগ আউট",
+  "exchangeSettingsRecipientsTitle": "প্রাপকসমূহ",
+  "exchangeSettingsTransactionsTitle": "লেনদেনসমূহ",
+  "exchangeTransactionsTitle": "লেনদেনসমূহ",
+  "exchangeTransactionsComingSoon": "লেনদেনসমূহ - শীঘ্রই আসছে",
+  "exchangeSecurityManage2FAPasswordLabel": "2FA এবং পাসওয়ার্ড পরিচালনা করুন",
+  "exchangeSecurityAccessSettingsButton": "সেটিংস অ্যাক্সেস করুন",
+  "exchangeReferralsTitle": "রেফারেল কোডসমূহ",
+  "exchangeReferralsJoinMissionTitle": "মিশনে যোগ দিন",
+  "exchangeReferralsContactSupportMessage": "আমাদের রেফারেল প্রোগ্রাম সম্পর্কে জানতে সাপোর্টে যোগাযোগ করুন",
+  "exchangeReferralsApplyToJoinMessage": "এখানে প্রোগ্রামে যোগ দিতে আবেদন করুন",
+  "exchangeReferralsMissionLink": "bullbitcoin.com/mission",
+  "exchangeRecipientsTitle": "প্রাপকসমূহ",
+  "exchangeRecipientsComingSoon": "প্রাপকসমূহ - শীঘ্রই আসছে",
+  "exchangeLogoutComingSoon": "লগ আউট - শীঘ্রই আসছে",
+  "exchangeLegacyTransactionsTitle": "লেগাসি লেনদেনসমূহ",
+  "exchangeLegacyTransactionsComingSoon": "লেগাসি লেনদেনসমূহ - শীঘ্রই আসছে",
+  "exchangeFileUploadTitle": "নিরাপদ ফাইল আপলোড",
+  "exchangeFileUploadDocumentTitle": "যেকোনো নথি আপলোড করুন",
+  "exchangeFileUploadInstructions": "আপনার যদি অন্য কোনো নথি পাঠাতে হয়, এখানে আপলোড করুন।",
+  "exchangeFileUploadButton": "আপলোড",
+  "exchangeFileUploadSuccess": "ফাইল সফলভাবে আপলোড হয়েছে",
+  "exchangeAccountTitle": "এক্সচেঞ্জ অ্যাকাউন্ট",
+  "exchangeAccountSettingsTitle": "এক্সচেঞ্জ অ্যাকাউন্ট সেটিংস",
+  "exchangeAccountComingSoon": "এই ফিচার শীঘ্রই আসছে।",
+  "exchangeBitcoinWalletsTitle": "ডিফল্ট Bitcoin ওয়ালেটসমূহ",
+  "exchangeBitcoinWalletsBitcoinAddressLabel": "Bitcoin ঠিকানা",
+  "exchangeBitcoinWalletsLightningAddressLabel": "Lightning (LN ঠিকানা)",
+  "exchangeBitcoinWalletsLiquidAddressLabel": "Liquid ঠিকানা",
+  "exchangeBitcoinWalletsEnterAddressHint": "ঠিকানা প্রবেশ করুন",
+  "exchangeAppSettingsSaveSuccessMessage": "সেটিংস সফলভাবে সংরক্ষিত হয়েছে",
+  "exchangeAppSettingsPreferredLanguageLabel": "পছন্দের ভাষা",
+  "exchangeAppSettingsDefaultCurrencyLabel": "ডিফল্ট মুদ্রা",
+  "exchangeAppSettingsValidationWarning": "সংরক্ষণের আগে অনুগ্রহ করে ভাষা এবং মুদ্রা উভয় পছন্দ নির্ধারণ করুন।",
+  "exchangeAppSettingsSaveButton": "সংরক্ষণ করুন",
+  "exchangeAccountInfoTitle": "অ্যাকাউন্ট তথ্য",
+  "exchangeAccountInfoLoadErrorMessage": "অ্যাকাউন্ট তথ্য লোড করা যাচ্ছে না",
+  "exchangeAccountInfoUserNumberLabel": "ব্যবহারকারী নম্বর",
+  "exchangeAccountInfoVerificationLevelLabel": "যাচাইকরণ স্তর",
+  "exchangeAccountInfoEmailLabel": "ইমেইল",
+  "exchangeAccountInfoFirstNameLabel": "প্রথম নাম",
+  "exchangeAccountInfoLastNameLabel": "শেষ নাম",
+  "exchangeAccountInfoVerificationIdentityVerified": "পরিচয় যাচাইকৃত",
+  "exchangeAccountInfoVerificationLightVerification": "লাইট যাচাইকরণ",
+  "exchangeAccountInfoVerificationLimitedVerification": "সীমিত যাচাইকরণ",
+  "exchangeAccountInfoVerificationNotVerified": "যাচাই করা হয়নি",
+  "exchangeAccountInfoUserNumberCopiedMessage": "ব্যবহারকারী নম্বর ক্লিপবোর্ডে কপি করা হয়েছে",
+  "exchangeAppSettingsEmailNotificationsLabel": "ইমেইল নোটিফিকেশন",
+  "exchangeAppSettingsEmailNotificationsDescription": "অর্ডার এবং অ্যাকাউন্ট আপডেটের জন্য ইমেইল নোটিফিকেশন পান",
+  "exchangeBitcoinWalletsSaveSuccess": "ওয়ালেট ঠিকানা সফলভাবে সংরক্ষিত হয়েছে",
+  "exchangeBitcoinWalletsDescription": "স্বয়ংক্রিয় Bitcoin উত্তোলনের জন্য ডিফল্ট ওয়ালেট ঠিকানা নির্ধারণ করুন।",
+  "exchangeFileUploadDocumentsTitle": "নথি আপলোড করুন",
+  "exchangeFileUploadInstructionsWithParams": "সর্বোচ্চ {maxFiles}টি ফাইল আপলোড করুন। অনুমোদিত ফরম্যাট: PDF, JPG, PNG, GIF, HEIC। সর্বোচ্চ ফাইল আকার: প্রতি ফাইল 10MB।",
+  "@exchangeFileUploadInstructionsWithParams": {
+    "placeholders": {
+      "maxFiles": {
+        "type": "int"
+      }
+    }
+  },
+  "exchangeFileUploadNoFilesSelected": "কোনো ফাইল নির্বাচন করা হয়নি",
+  "exchangeFileUploadSelectFilesHint": "নথি বেছে নিতে \"ফাইল নির্বাচন করুন\" ট্যাপ করুন",
+  "exchangeFileUploadSelectFiles": "ফাইল নির্বাচন করুন",
+  "exchangeFileUploadAddMoreFiles": "আরো ফাইল যোগ করুন",
+  "exchangeFileUploadUploading": "আপলোড হচ্ছে...",
+  "exchangeFileUploadUploadCount": "{count}টি {count, plural, =1{ফাইল} other{ফাইল}} আপলোড করুন",
+  "@exchangeFileUploadUploadCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "exchangeFileUploadClearAll": "সব মুছুন",
+  "exchangeFileUploadAllSuccess": "সব ফাইল সফলভাবে আপলোড হয়েছে",
+  "exchangeFileUploadPartialSuccess": "{total}টির মধ্যে {uploaded}টি ফাইল আপলোড হয়েছে",
+  "@exchangeFileUploadPartialSuccess": {
+    "placeholders": {
+      "uploaded": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
+  "exchangeFileUploadStatusReady": "প্রস্তুত",
+  "exchangeFileUploadStatusInReview": "পর্যালোচনাধীন",
+  "exchangeFileUploadStatusAccepted": "গৃহীত",
+  "exchangeFileUploadStatusRejected": "প্রত্যাখ্যাত - পুনরায় আপলোড করতে ট্যাপ করুন",
+  "exchangeFileUploadInReviewMessage": "আপনার নথি বর্তমানে পর্যালোচনাধীন। পর্যালোচনা সম্পন্ন না হওয়া পর্যন্ত আর ফাইল আপলোড করা যাবে না।",
+  "exchangeFileUploadAcceptedMessage": "আপনার নথি গৃহীত হয়েছে। আর আপলোডের প্রয়োজন নেই।",
+  "exchangeStatisticsTitle": "পরিসংখ্যান",
+  "exchangeStatisticsNoData": "কোনো পরিসংখ্যান নেই",
+  "exchangeStatisticsAsOf": "{date} পর্যন্ত",
+  "@exchangeStatisticsAsOf": {
+    "placeholders": {
+      "date": {
+        "type": "String"
+      }
+    }
+  },
+  "exchangeStatisticsOrderStats": "অর্ডার পরিসংখ্যান",
+  "exchangeStatisticsBuySellRatio": "ক্রয়/বিক্রয় অনুপাত",
+  "exchangeStatisticsBuySellRatioDesc": "ক্রয় বনাম বিক্রয় থেকে মোট ভলিউমের শতাংশ",
+  "exchangeStatisticsBuyStats": "ক্রয় পরিসংখ্যান",
+  "exchangeStatisticsSellStats": "বিক্রয় পরিসংখ্যান",
+  "exchangeStatisticsVolume": "ভলিউম",
+  "exchangeStatisticsBuyVolumeDesc": "Bitcoin কেনায় মোট ব্যয়িত পরিমাণ",
+  "exchangeStatisticsSellVolumeDesc": "Bitcoin বিক্রয় থেকে মোট প্রাপ্ত পরিমাণ",
+  "exchangeStatisticsTradeCount": "ট্রেডের সংখ্যা",
+  "exchangeStatisticsBuyTradeCountDesc": "Bitcoin কেনার লেনদেনের সংখ্যা",
+  "exchangeStatisticsSellTradeCountDesc": "Bitcoin বিক্রির লেনদেনের সংখ্যা",
+  "exchangeStatisticsAveragePrice": "গড় মূল্য",
+  "exchangeStatisticsBuyAvgPriceDesc": "কেনার সময় প্রতি Bitcoin-এ গড় পরিশোধিত মূল্য",
+  "exchangeStatisticsSellAvgPriceDesc": "বিক্রির সময় প্রতি Bitcoin-এ গড় প্রাপ্ত মূল্য",
+  "exchangeStatisticsTotalVolume": "মোট ট্রেডিং ভলিউম",
+  "exchangeStatisticsTotalVolumeDesc": "ফিয়াট মুদ্রায় মোট ক্রয় ও বিক্রয় ভলিউম",
+  "exchangeStatisticsBillerStats": "বিলার পরিসংখ্যান",
+  "exchangeStatisticsCurrency": "মুদ্রা: {currency}",
+  "@exchangeStatisticsCurrency": {
+    "placeholders": {
+      "currency": {
+        "type": "String"
+      }
+    }
+  },
+  "exchangeStatisticsTotalAmount": "মোট পরিমাণ",
+  "retry": "পুনরায় চেষ্টা করুন",
+  "walletsListTitle": "ওয়ালেট বিবরণ",
+  "walletsListNoWalletsMessage": "কোনো ওয়ালেট পাওয়া যায়নি",
+  "walletDeletionConfirmationTitle": "ওয়ালেট মুছুন",
+  "walletDeletionConfirmationMessage": "আপনি কি নিশ্চিতভাবে এই ওয়ালেট মুছতে চান?",
+  "walletDeletionConfirmationCancelButton": "বাতিল করুন",
+  "walletDeletionConfirmationDeleteButton": "মুছুন",
+  "walletDeletionFailedTitle": "মোছা ব্যর্থ হয়েছে",
+  "walletDeletionErrorDefaultWallet": "আপনি একটি ডিফল্ট ওয়ালেট মুছতে পারবেন না।",
+  "walletDeletionErrorOngoingSwaps": "চলমান swap-সহ একটি ওয়ালেট মুছতে পারবেন না।",
+  "walletDeletionErrorWalletNotFound": "আপনি যে ওয়ালেট মুছতে চাইছেন তা বিদ্যমান নেই।",
+  "walletDeletionErrorGeneric": "ওয়ালেট মুছে ফেলতে ব্যর্থ হয়েছে, অনুগ্রহ করে আবার চেষ্টা করুন।",
+  "walletDeletionFailedOkButton": "ঠিক আছে",
+  "addressCardUsedLabel": "ব্যবহৃত",
+  "addressCardUnusedLabel": "অব্যবহৃত",
+  "addressCardCopiedMessage": "ঠিকানা ক্লিপবোর্ডে কপি করা হয়েছে",
+  "addressCardIndexLabel": "সূচক: ",
+  "addressCardBalanceLabel": "ব্যালেন্স: ",
+  "onboardingRecoverYourWallet": "আপনার ওয়ালেট পুনরুদ্ধার করুন",
+  "onboardingEncryptedVault": "এনক্রিপ্টেড ভল্ট",
+  "onboardingEncryptedVaultDescription": "আপনার PIN ব্যবহার করে ক্লাউডের মাধ্যমে আপনার ব্যাকআপ পুনরুদ্ধার করুন।",
+  "onboardingPhysicalBackup": "ফিজিক্যাল ব্যাকআপ",
+  "onboardingPhysicalBackupDescription": "12টি শব্দের মাধ্যমে আপনার ওয়ালেট পুনরুদ্ধার করুন।",
+  "onboardingRecover": "পুনরুদ্ধার করুন",
+  "onboardingBullBitcoin": "Bull Bitcoin",
+  "onboardingOwnYourMoney": "আপনার অর্থের মালিক হন",
+  "onboardingSplashDescription": "সার্বভৌম সেলফ-কাস্টডি Bitcoin ওয়ালেট এবং শুধুমাত্র Bitcoin এক্সচেঞ্জ সেবা।",
+  "onboardingRecoverWallet": "ওয়ালেট পুনরুদ্ধার করুন",
+  "onboardingRecoverWalletButton": "ওয়ালেট পুনরুদ্ধার করুন",
+  "onboardingCreateNewWallet": "নতুন ওয়ালেট তৈরি করুন"
+}
