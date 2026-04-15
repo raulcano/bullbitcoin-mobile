@@ -102,6 +102,12 @@ class ApiServiceConstants {
       dotenv.env['BB_API_URL'] ?? 'https://api.bullbitcoin.com';
   static String bbApiTestUrl =
       dotenv.env['BB_API_TEST_URL'] ?? 'https://api05.bullbitcoin.dev';
+  static String dlcCoordinatorBaseUrl =
+      dotenv.env['DLC_COORDINATOR_URL'] ?? 'http://localhost:8000';
+  static String dlcCoordinatorTestBaseUrl =
+      dotenv.env['DLC_COORDINATOR_TEST_URL'] ??
+      dotenv.env['DLC_COORDINATOR_URL'] ??
+      'http://localhost:8000';
   static String bbAuthUrl = 'https://${dotenv.env['BB_AUTH_URL']}';
   static String bbAuthTestUrl = 'https://${dotenv.env['BB_AUTH_TEST_URL']}';
   static String bbKycUrl = 'https://app.bullbitcoin.com/kyc';

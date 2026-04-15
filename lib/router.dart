@@ -12,6 +12,7 @@ import 'package:bb_mobile/features/bitbox/ui/bitbox_router.dart';
 import 'package:bb_mobile/features/broadcast_signed_tx/router.dart';
 import 'package:bb_mobile/features/buy/ui/buy_router.dart';
 import 'package:bb_mobile/features/dca/ui/dca_router.dart';
+import 'package:bb_mobile/features/dlc/ui/dlc_router.dart';
 import 'package:bb_mobile/features/electrum_settings/frameworks/ui/routing/electrum_settings_router.dart';
 import 'package:bb_mobile/features/exchange/ui/exchange_router.dart';
 import 'package:bb_mobile/features/mempool_settings/router.dart';
@@ -62,6 +63,8 @@ class AppRouter {
           final location = state.uri.toString();
           final tabIndex = location.startsWith(ExchangeRoute.exchangeHome.path)
               ? 1
+              : location.startsWith(DlcRoute.dlcHome.path)
+              ? 2
               : 0;
           final isSupportChat = location.contains('/support-chat') ||
               location.contains('/login-support');
@@ -87,7 +90,7 @@ class AppRouter {
                           onTap: (index) {
                             if (index == 0) {
                               context.goNamed(WalletRoute.walletHome.name);
-                            } else {
+                            } else if (index == 1) {
                               // Exchange tab
                               if (Platform.isIOS) {
                                 final isSuperuser =
@@ -110,6 +113,8 @@ class AppRouter {
                                   ExchangeRoute.exchangeHome.name,
                                 );
                               }
+                            } else {
+                              context.goNamed(DlcRoute.dlcHome.name);
                             }
                           },
                           items: [
@@ -123,6 +128,11 @@ class AppRouter {
                               label: context.loc.navigationTabExchange,
                               backgroundColor: context.appColors.background,
                             ),
+                            BottomNavigationBarItem(
+                              icon: const Icon(Icons.candlestick_chart),
+                              label: context.loc.navigationTabDlcs,
+                              backgroundColor: context.appColors.background,
+                            ),
                           ],
                         ),
                 ),
@@ -130,7 +140,11 @@ class AppRouter {
             ),
           );
         },
-        routes: [WalletRouter.walletHomeRoute, ...ExchangeRouter.routes],
+        routes: [
+          WalletRouter.walletHomeRoute,
+          ...ExchangeRouter.routes,
+          DlcRouter.route,
+        ],
       ),
       OnboardingRouter.route,
       AppUnlockRouter.route,

@@ -12434,6 +12434,10 @@
   "@navigationTabExchange": {
     "description": "Label for the Exchange tab in bottom navigation"
   },
+  "navigationTabDlcs": "DLCs",
+  "@navigationTabDlcs": {
+    "description": "Label for the DLCs tab in bottom navigation"
+  },
   "buyUnauthenticatedError": "You are not authenticated. Please log in to continue.",
   "@buyUnauthenticatedError": {
     "description": "Error message for unauthenticated user during buy"

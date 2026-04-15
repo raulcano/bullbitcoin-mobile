@@ -54,6 +54,8 @@ class ServiceStatusPage extends StatelessWidget {
                         const SizedBox(height: 12),
                         _ServiceStatusItem(service: serviceStatus.mempool),
                         const SizedBox(height: 12),
+                        _ServiceStatusItem(service: serviceStatus.dlcApi),
+                        const SizedBox(height: 12),
                         _ServiceStatusItem(service: serviceStatus.tor),
                         const SizedBox(height: 12),
                         _ServiceStatusItem(service: serviceStatus.recoverbull),

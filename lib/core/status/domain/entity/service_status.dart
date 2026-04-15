@@ -81,6 +81,14 @@ sealed class AllServicesStatus with _$AllServicesStatus {
     @Default(
       ServiceStatusInfo(
         status: ServiceStatus.unknown,
+        name: 'DLC API',
+        lastChecked: null,
+      ),
+    )
+    ServiceStatusInfo dlcApi,
+    @Default(
+      ServiceStatusInfo(
+        status: ServiceStatus.unknown,
         name: 'Tor',
         lastChecked: null,
       ),
@@ -115,6 +123,7 @@ sealed class AllServicesStatus with _$AllServicesStatus {
       payjoin.isOnline &&
       pricer.isOnline &&
       mempool.isOnline &&
+      dlcApi.isOnline &&
       (tor.isOnline || tor.isUnknown) &&
       (recoverbull.isOnline || recoverbull.isUnknown) &&
       (ark.isOnline || ark.isUnknown);
