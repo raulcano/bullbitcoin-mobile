@@ -1,4 +1,6 @@
 import 'package:bb_mobile/core/settings/data/settings_repository.dart';
+import 'package:bb_mobile/core/settings/domain/repositories/settings_repository.dart'
+    as domain;
 import 'package:bb_mobile/core/storage/data/datasources/key_value_storage/key_value_storage_datasource.dart';
 import 'package:bb_mobile/core/utils/constants.dart';
 import 'package:bb_mobile/core/wallet/data/repositories/wallet_repository.dart';
@@ -16,10 +18,16 @@ class DlcLocator {
     locator.registerLazySingleton<Dio>(
       () => Dio(
         BaseOptions(
-          baseUrl: ApiServiceConstants.dlcCoordinatorBaseUrl,
+          baseUrl: ApiServiceConstants.dlcCoordinatorBaseUrl.trim().replaceAll(
+            RegExp(r'/+$'),
+            '',
+          ),
           connectTimeout: const Duration(seconds: 8),
           receiveTimeout: const Duration(seconds: 8),
           sendTimeout: const Duration(seconds: 8),
+          // Uvicorn/httptools can mis-parse back-to-back POSTs on a keep-alive
+          // connection (known issue; logs "Invalid HTTP request received").
+          persistentConnection: false,
         ),
       ),
       instanceName: 'dlcCoordinatorDio',
@@ -28,6 +36,7 @@ class DlcLocator {
     locator.registerLazySingleton<DlcApiDatasource>(
       () => DlcApiDatasource(
         dio: locator<Dio>(instanceName: 'dlcCoordinatorDio'),
+        settingsRepository: locator<domain.SettingsRepository>(),
       ),
     );
 

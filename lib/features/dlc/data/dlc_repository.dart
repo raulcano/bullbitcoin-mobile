@@ -29,6 +29,32 @@ class DlcRepository {
     return _authStorage.get(await _environment());
   }
 
+  /// Calls GET /auth/wallet/{walletId} with the stored bearer token.
+  /// On success: persists refreshed [expires_at] from the API, returns auth
+  /// with the **same** [walletToken]. On 401/403/404: clears storage and returns null.
+  Future<DlcWalletAuth?> validateStoredWalletAuth(DlcWalletAuth auth) async {
+    final env = await _environment();
+    final payload = await _datasource.getWalletOrNullOnAuthFailure(
+      token: auth.walletToken,
+      walletId: auth.walletId,
+    );
+    if (payload == null) {
+      await _authStorage.clear(env);
+      return null;
+    }
+    final walletId = payload['wallet_id'] as String? ?? auth.walletId;
+    final expiresAt = DateTime.tryParse(
+      payload['expires_at'] as String? ?? '',
+    );
+    final refreshed = DlcWalletAuth(
+      walletId: walletId,
+      walletToken: auth.walletToken,
+      expiresAt: expiresAt ?? auth.expiresAt,
+    );
+    await _authStorage.store(env, refreshed);
+    return refreshed;
+  }
+
   Future<List<Map<String, dynamic>>> listInstruments() async {
     final payload = await _datasource.listInstruments();
     return payload.whereType<Map<String, dynamic>>().toList();

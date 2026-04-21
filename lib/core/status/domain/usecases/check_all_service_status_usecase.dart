@@ -7,7 +7,6 @@ import 'package:bb_mobile/core/fees/data/fees_repository.dart';
 import 'package:bb_mobile/core/payjoin/domain/repositories/payjoin_repository.dart';
 import 'package:bb_mobile/core/recoverbull/data/repository/recoverbull_repository.dart';
 import 'package:bb_mobile/core/settings/data/settings_repository.dart';
-import 'package:bb_mobile/core/settings/domain/settings_entity.dart';
 import 'package:bb_mobile/core/status/domain/entity/service_status.dart';
 import 'package:bb_mobile/core/status/domain/ports/electrum_connectivity_port.dart';
 import 'package:bb_mobile/core/swaps/data/repository/boltz_swap_repository.dart';
@@ -228,12 +227,15 @@ class CheckAllServiceStatusUsecase {
   Future<ServiceStatusInfo> _checkDlcApiService() async {
     try {
       final settings = await _settingsRepository.fetch();
-      final baseUrl = _resolveDlcBaseUrl(settings.environment);
+      final baseUrl = ApiServiceConstants.dlcCoordinatorUrlForEnvironment(
+        settings.environment,
+      );
       final dio = Dio(
         BaseOptions(
           baseUrl: baseUrl,
           connectTimeout: const Duration(seconds: 10),
           receiveTimeout: const Duration(seconds: 10),
+          sendTimeout: const Duration(seconds: 10),
         ),
       );
 
@@ -391,10 +393,4 @@ class CheckAllServiceStatusUsecase {
     );
   }
 
-  String _resolveDlcBaseUrl(Environment environment) {
-    if (environment.isTestnet) {
-      return ApiServiceConstants.dlcCoordinatorTestBaseUrl;
-    }
-    return ApiServiceConstants.dlcCoordinatorBaseUrl;
-  }
 }

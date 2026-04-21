@@ -18,7 +18,7 @@ class DlcRouter {
     pageBuilder: (context, state) => NoTransitionPage(
       key: state.pageKey,
       child: BlocProvider(
-        create: (_) => locator<DlcCubit>()..load(),
+        create: (_) => locator<DlcCubit>(),
         child: const DlcHomeScreen(),
       ),
     ),

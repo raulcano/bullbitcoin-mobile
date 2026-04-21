@@ -1,11 +1,29 @@
+import 'package:bb_mobile/core/settings/domain/repositories/settings_repository.dart';
+import 'package:bb_mobile/core/utils/constants.dart';
 import 'package:dio/dio.dart';
 
 class DlcApiDatasource {
   final Dio _dio;
+  final SettingsRepository _settingsRepository;
 
-  DlcApiDatasource({required Dio dio}) : _dio = dio;
+  DlcApiDatasource({
+    required Dio dio,
+    required SettingsRepository settingsRepository,
+  }) : _dio = dio,
+       _settingsRepository = settingsRepository;
+
+  Future<void> _ensureBaseUrl() async {
+    final settings = await _settingsRepository.fetch();
+    final next = ApiServiceConstants.dlcCoordinatorUrlForEnvironment(
+      settings.environment,
+    );
+    if (_dio.options.baseUrl != next) {
+      _dio.options.baseUrl = next;
+    }
+  }
 
   Future<Map<String, dynamic>> createNonce() async {
+    await _ensureBaseUrl();
     try {
       final response = await _dio.post('/auth/nonce', data: <String, dynamic>{});
       return (response.data as Map<String, dynamic>);
@@ -21,6 +39,7 @@ class DlcApiDatasource {
     required String label,
     required List<Map<String, dynamic>> utxos,
   }) async {
+    await _ensureBaseUrl();
     try {
       final response = await _dio.post(
         '/auth/wallet',
@@ -39,6 +58,7 @@ class DlcApiDatasource {
   }
 
   Future<List<dynamic>> listInstruments() async {
+    await _ensureBaseUrl();
     try {
       final response = await _dio.get('/instruments/non-expired');
       return (response.data as List<dynamic>? ?? const []);
@@ -51,6 +71,7 @@ class DlcApiDatasource {
     required String token,
     required Map<String, dynamic> payload,
   }) async {
+    await _ensureBaseUrl();
     try {
       final response = await _dio.post(
         '/orders',
@@ -64,6 +85,7 @@ class DlcApiDatasource {
   }
 
   Future<List<dynamic>> listOrders({required String token}) async {
+    await _ensureBaseUrl();
     try {
       final response = await _dio.get(
         '/orders',
@@ -79,6 +101,7 @@ class DlcApiDatasource {
     required String token,
     required String orderId,
   }) async {
+    await _ensureBaseUrl();
     try {
       final response = await _dio.get(
         '/orders/$orderId',
@@ -94,6 +117,7 @@ class DlcApiDatasource {
     required String token,
     required String walletId,
   }) async {
+    await _ensureBaseUrl();
     try {
       final response = await _dio.get(
         '/auth/wallet/$walletId',
@@ -105,11 +129,38 @@ class DlcApiDatasource {
     }
   }
 
+  /// GET /auth/wallet/{id} — returns `null` when the token is expired or denied
+  /// (401 / 403 / 404) so the app can clear stored credentials without treating
+  /// that as a hard error. Other failures still throw.
+  Future<Map<String, dynamic>?> getWalletOrNullOnAuthFailure({
+    required String token,
+    required String walletId,
+  }) async {
+    await _ensureBaseUrl();
+    try {
+      final response = await _dio.get(
+        '/auth/wallet/$walletId',
+        options: Options(headers: {'Authorization': 'Bearer $token'}),
+      );
+      final data = response.data;
+      if (data is Map<String, dynamic>) return data;
+      if (data is Map) return Map<String, dynamic>.from(data);
+      return null;
+    } on DioException catch (e) {
+      final code = e.response?.statusCode;
+      if (code == 401 || code == 403 || code == 404) {
+        return null;
+      }
+      throw Exception(_readApiError(e));
+    }
+  }
+
   Future<Map<String, dynamic>> acceptContext({
     required String token,
     required String orderId,
     required String fundingPubkeyHex,
   }) async {
+    await _ensureBaseUrl();
     try {
       final response = await _dio.post(
         '/orders/$orderId/accept-context',
@@ -127,6 +178,7 @@ class DlcApiDatasource {
     required String orderId,
     required Map<String, dynamic> payload,
   }) async {
+    await _ensureBaseUrl();
     try {
       final response = await _dio.post(
         '/orders/$orderId/accept-match',
@@ -143,6 +195,7 @@ class DlcApiDatasource {
     required String token,
     required String dlcId,
   }) async {
+    await _ensureBaseUrl();
     try {
       final response = await _dio.get(
         '/dlcs/$dlcId/sign-context',
@@ -159,6 +212,7 @@ class DlcApiDatasource {
     required String dlcId,
     required Map<String, dynamic> payload,
   }) async {
+    await _ensureBaseUrl();
     try {
       final response = await _dio.post(
         '/dlcs/$dlcId/sign',
@@ -175,6 +229,7 @@ class DlcApiDatasource {
     required String token,
     required String dlcId,
   }) async {
+    await _ensureBaseUrl();
     try {
       final response = await _dio.get(
         '/dlcs/$dlcId/settlement-status',
@@ -189,6 +244,7 @@ class DlcApiDatasource {
   Future<Map<String, dynamic>> getOrderbook({
     required String instrumentId,
   }) async {
+    await _ensureBaseUrl();
     try {
       final response = await _dio.get('/orderbook/$instrumentId');
       return (response.data as Map<String, dynamic>);

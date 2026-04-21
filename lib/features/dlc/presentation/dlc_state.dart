@@ -70,6 +70,7 @@ class DlcState {
     List<Map<String, dynamic>>? instruments,
     List<DlcOrderSummary>? orders,
     String? selectedInstrumentId,
+    bool clearSelectedInstrument = false,
     DlcOptionType? optionType,
     DlcOrderSide? side,
     double? quantity,
@@ -91,7 +92,9 @@ class DlcState {
       auth: clearAuth ? null : (auth ?? this.auth),
       instruments: instruments ?? this.instruments,
       orders: orders ?? this.orders,
-      selectedInstrumentId: selectedInstrumentId ?? this.selectedInstrumentId,
+      selectedInstrumentId: clearSelectedInstrument
+          ? null
+          : (selectedInstrumentId ?? this.selectedInstrumentId),
       optionType: optionType ?? this.optionType,
       side: side ?? this.side,
       quantity: quantity ?? this.quantity,

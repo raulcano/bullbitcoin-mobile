@@ -1,4 +1,5 @@
 import 'dart:math';
+import 'package:bb_mobile/core/settings/domain/settings_entity.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 
@@ -108,6 +109,17 @@ class ApiServiceConstants {
       dotenv.env['DLC_COORDINATOR_TEST_URL'] ??
       dotenv.env['DLC_COORDINATOR_URL'] ??
       'http://localhost:8000';
+
+  /// Normalized base URL for DLC coordinator (no trailing slash), for the
+  /// current app environment.
+  static String dlcCoordinatorUrlForEnvironment(Environment environment) {
+    final raw = environment.isTestnet
+        ? dlcCoordinatorTestBaseUrl
+        : dlcCoordinatorBaseUrl;
+    final trimmed = raw.trim();
+    if (trimmed.isEmpty) return 'http://localhost:8000';
+    return trimmed.replaceAll(RegExp(r'/+$'), '');
+  }
   static String bbAuthUrl = 'https://${dotenv.env['BB_AUTH_URL']}';
   static String bbAuthTestUrl = 'https://${dotenv.env['BB_AUTH_TEST_URL']}';
   static String bbKycUrl = 'https://app.bullbitcoin.com/kyc';

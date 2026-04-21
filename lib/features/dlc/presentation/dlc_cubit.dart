@@ -1,4 +1,5 @@
 import 'package:bb_mobile/features/dlc/data/dlc_repository.dart';
+import 'package:bb_mobile/features/dlc/domain/dlc_instrument_utils.dart';
 import 'package:bb_mobile/features/dlc/domain/dlc_models.dart';
 import 'package:bb_mobile/features/dlc/presentation/dlc_state.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -13,16 +14,31 @@ class DlcCubit extends Cubit<DlcState> {
   Future<void> load() async {
     emit(state.copyWith(loading: true, clearError: true, clearInfo: true));
     try {
-      final auth = await _repository.getWalletAuth();
       final instruments = await _repository.listInstruments();
+      DlcWalletAuth? auth = await _repository.getWalletAuth();
+      String? sessionInfo;
+      if (auth != null) {
+        final validated = await _repository.validateStoredWalletAuth(auth);
+        if (validated == null) {
+          auth = null;
+          sessionInfo =
+              'Your DLC wallet session expired or was revoked. Register again to trade.';
+        } else {
+          auth = validated;
+        }
+      }
       final orders = auth == null
           ? <DlcOrderSummary>[]
           : await _repository.listOrders();
       final balances = auth == null ? null : await _repository.getWalletBalances();
-      final selectedInstrument = instruments.isEmpty
+      final filteredForBook = instruments
+          .where(
+            (i) => dlcInstrumentMatchesOptionType(i, state.optionType),
+          )
+          .toList();
+      final selectedInstrument = filteredForBook.isEmpty
           ? null
-          : (instruments.first['instrument_id'] as String? ??
-                instruments.first['id'] as String?);
+          : dlcInstrumentId(filteredForBook.first);
       final orderbook = selectedInstrument == null
           ? <String, dynamic>{}
           : await _repository.getOrderbook(selectedInstrument);
@@ -32,6 +48,7 @@ class DlcCubit extends Cubit<DlcState> {
           auth: auth,
           instruments: instruments,
           orders: orders,
+          clearSelectedInstrument: selectedInstrument == null,
           selectedInstrumentId: selectedInstrument,
           totalBalanceSat: (balances?['total_balance'] as num?)?.toInt(),
           availableBalanceSat: (balances?['available_balance'] as num?)?.toInt(),
@@ -42,6 +59,7 @@ class DlcCubit extends Cubit<DlcState> {
           orderbookAsks: (orderbook['asks'] as List<dynamic>? ?? const [])
               .whereType<Map<String, dynamic>>()
               .toList(),
+          infoMessage: sessionInfo,
         ),
       );
     } catch (e) {
@@ -90,26 +108,72 @@ class DlcCubit extends Cubit<DlcState> {
   }
 
   void setOptionType(DlcOptionType optionType) {
-    final filtered = state.instruments.where((instrument) {
-      final id = (instrument['instrument_id'] ?? instrument['id'] ?? '')
-          .toString()
-          .toUpperCase();
-      return id.contains(optionType.value);
-    }).toList();
+    final filtered = state.instruments
+        .where((i) => dlcInstrumentMatchesOptionType(i, optionType))
+        .toList();
+    String? nextId;
+    if (filtered.isEmpty) {
+      nextId = null;
+    } else {
+      final current = state.selectedInstrumentId;
+      nextId =
+          current != null &&
+              filtered.any((i) => dlcInstrumentId(i) == current)
+          ? current
+          : dlcInstrumentId(filtered.first);
+    }
     emit(
       state.copyWith(
         optionType: optionType,
-        selectedInstrumentId: filtered.isEmpty
-            ? state.selectedInstrumentId
-            : (filtered.first['instrument_id'] ?? filtered.first['id']).toString(),
+        clearSelectedInstrument: nextId == null,
+        selectedInstrumentId: nextId,
         clearError: true,
       ),
     );
-    if (filtered.isNotEmpty) {
-      final instrumentId =
-          (filtered.first['instrument_id'] ?? filtered.first['id']).toString();
+    if (nextId != null) {
       // ignore: discarded_futures
-      _refreshOrderbook(instrumentId);
+      _refreshOrderbook(nextId);
+    }
+  }
+
+  /// Refetches non-expired instruments from the coordinator and refreshes the orderbook.
+  Future<void> refreshInstruments() async {
+    emit(state.copyWith(loading: true, clearError: true));
+    try {
+      final instruments = await _repository.listInstruments();
+      final filtered = instruments
+          .where((i) => dlcInstrumentMatchesOptionType(i, state.optionType))
+          .toList();
+      var selectedId = state.selectedInstrumentId;
+      if (selectedId == null ||
+          !filtered.any((i) => dlcInstrumentId(i) == selectedId)) {
+        selectedId = filtered.isEmpty ? null : dlcInstrumentId(filtered.first);
+      }
+      Map<String, dynamic> orderbook = {};
+      if (selectedId != null) {
+        orderbook = await _repository.getOrderbook(selectedId);
+      }
+      emit(
+        state.copyWith(
+          loading: false,
+          instruments: instruments,
+          clearSelectedInstrument: selectedId == null,
+          selectedInstrumentId: selectedId,
+          orderbookBids: (orderbook['bids'] as List<dynamic>? ?? const [])
+              .whereType<Map<String, dynamic>>()
+              .toList(),
+          orderbookAsks: (orderbook['asks'] as List<dynamic>? ?? const [])
+              .whereType<Map<String, dynamic>>()
+              .toList(),
+        ),
+      );
+    } catch (e) {
+      emit(
+        state.copyWith(
+          loading: false,
+          errorMessage: 'Failed to refresh instruments: $e',
+        ),
+      );
     }
   }
 
