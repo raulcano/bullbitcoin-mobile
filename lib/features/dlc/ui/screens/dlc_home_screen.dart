@@ -14,7 +14,7 @@ class DlcHomeScreen extends StatefulWidget {
 }
 
 class _DlcHomeScreenState extends State<DlcHomeScreen> {
-  final _quantityController = TextEditingController(text: '0.01');
+  final _quantityController = TextEditingController(text: '10000');
   final _priceController = TextEditingController(text: '0');
 
   @override
@@ -39,17 +39,8 @@ class _DlcHomeScreenState extends State<DlcHomeScreen> {
     return BlocBuilder<DlcCubit, DlcState>(
       builder: (context, state) {
         final filteredInstruments = state.instruments
-            .where(
-              (i) => dlcInstrumentMatchesOptionType(i, state.optionType),
-            )
+            .where((i) => dlcInstrumentMatchesOptionType(i, state.optionType))
             .toList();
-        final initialInstrument = filteredInstruments.any(
-          (instrument) =>
-              (instrument['instrument_id'] ?? instrument['id']).toString() ==
-              state.selectedInstrumentId,
-        )
-            ? state.selectedInstrumentId
-            : null;
         final selectedForOrderbook = dlcInstrumentById(
           filteredInstruments,
           state.selectedInstrumentId,
@@ -63,6 +54,7 @@ class _DlcHomeScreenState extends State<DlcHomeScreen> {
         final closedOrders = state.orders
             .where((o) => _isClosedOrder(o))
             .toList(growable: false);
+        final tradingBlocked = _tradingBlocked(state);
 
         return Scaffold(
           body: SafeArea(
@@ -72,16 +64,20 @@ class _DlcHomeScreenState extends State<DlcHomeScreen> {
                   width: double.infinity,
                   padding: const EdgeInsets.symmetric(vertical: 2),
                   decoration: BoxDecoration(
-                    color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                    color: Theme.of(
+                      context,
+                    ).colorScheme.surfaceContainerHighest,
                   ),
                   child: SegmentedButton<int>(
                     style: SegmentedButton.styleFrom(
                       backgroundColor: Theme.of(context).colorScheme.surface,
                       foregroundColor: Theme.of(context).colorScheme.onSurface,
-                      selectedBackgroundColor:
-                          Theme.of(context).colorScheme.surfaceContainerLow,
-                      selectedForegroundColor:
-                          Theme.of(context).colorScheme.onSurface,
+                      selectedBackgroundColor: Theme.of(
+                        context,
+                      ).colorScheme.surfaceContainerLow,
+                      selectedForegroundColor: Theme.of(
+                        context,
+                      ).colorScheme.onSurface,
                       shape: const RoundedRectangleBorder(
                         borderRadius: BorderRadius.zero,
                       ),
@@ -130,21 +126,27 @@ class _DlcHomeScreenState extends State<DlcHomeScreen> {
                           Container(
                             padding: const EdgeInsets.all(10),
                             decoration: BoxDecoration(
-                              color: Theme.of(context).colorScheme.errorContainer,
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.errorContainer,
                               borderRadius: BorderRadius.circular(10),
                             ),
                             child: Row(
                               children: [
                                 Icon(
                                   Icons.error_outline,
-                                  color: Theme.of(context).colorScheme.onErrorContainer,
+                                  color: Theme.of(
+                                    context,
+                                  ).colorScheme.onErrorContainer,
                                 ),
                                 const SizedBox(width: 8),
                                 Expanded(
                                   child: Text(
                                     state.errorMessage!,
                                     style: TextStyle(
-                                      color: Theme.of(context).colorScheme.onErrorContainer,
+                                      color: Theme.of(
+                                        context,
+                                      ).colorScheme.onErrorContainer,
                                     ),
                                   ),
                                 ),
@@ -157,21 +159,27 @@ class _DlcHomeScreenState extends State<DlcHomeScreen> {
                           Container(
                             padding: const EdgeInsets.all(10),
                             decoration: BoxDecoration(
-                              color: Theme.of(context).colorScheme.primaryContainer,
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.primaryContainer,
                               borderRadius: BorderRadius.circular(10),
                             ),
                             child: Row(
                               children: [
                                 Icon(
                                   Icons.info_outline,
-                                  color: Theme.of(context).colorScheme.onPrimaryContainer,
+                                  color: Theme.of(
+                                    context,
+                                  ).colorScheme.onPrimaryContainer,
                                 ),
                                 const SizedBox(width: 8),
                                 Expanded(
                                   child: Text(
                                     state.infoMessage!,
                                     style: TextStyle(
-                                      color: Theme.of(context).colorScheme.onPrimaryContainer,
+                                      color: Theme.of(
+                                        context,
+                                      ).colorScheme.onPrimaryContainer,
                                     ),
                                   ),
                                 ),
@@ -203,48 +211,99 @@ class _DlcHomeScreenState extends State<DlcHomeScreen> {
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  Text(
-                                    'Create order',
-                                    style: Theme.of(context).textTheme.titleMedium,
+                                  Row(
+                                    children: [
+                                      Icon(
+                                        Icons.add_chart_outlined,
+                                        size: 18,
+                                        color: Theme.of(
+                                          context,
+                                        ).colorScheme.primary,
+                                      ),
+                                      const SizedBox(width: 6),
+                                      Text(
+                                        'Create order',
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .titleMedium
+                                            ?.copyWith(
+                                              fontWeight: FontWeight.w600,
+                                            ),
+                                      ),
+                                    ],
                                   ),
                                   const SizedBox(height: 8),
                                   SegmentedButton<DlcOrderSide>(
                                     segments: const [
-                                      ButtonSegment(value: DlcOrderSide.buy, label: Text('Buy')),
-                                      ButtonSegment(value: DlcOrderSide.sell, label: Text('Sell')),
+                                      ButtonSegment(
+                                        value: DlcOrderSide.buy,
+                                        label: Text('Buy'),
+                                      ),
+                                      ButtonSegment(
+                                        value: DlcOrderSide.sell,
+                                        label: Text('Sell'),
+                                      ),
                                     ],
                                     selected: {state.side},
                                     onSelectionChanged: state.loading
                                         ? null
                                         : (selection) => context
-                                            .read<DlcCubit>()
-                                            .setSide(selection.first),
+                                              .read<DlcCubit>()
+                                              .setSide(selection.first),
                                   ),
                                   const SizedBox(height: 8),
                                   TextField(
                                     controller: _quantityController,
-                                    keyboardType: const TextInputType.numberWithOptions(
-                                      decimal: true,
-                                    ),
+                                    keyboardType:
+                                        const TextInputType.numberWithOptions(
+                                          decimal: true,
+                                        ),
                                     decoration: const InputDecoration(
-                                      labelText: 'Quantity (BTC)',
+                                      labelText: 'Quantity',
+                                      helperText:
+                                          'Exact quantity only. Partial fills are not supported.',
                                     ),
-                                    onChanged: context.read<DlcCubit>().setQuantity,
+                                    onChanged: context
+                                        .read<DlcCubit>()
+                                        .setQuantity,
                                   ),
                                   const SizedBox(height: 8),
                                   TextField(
                                     controller: _priceController,
-                                    keyboardType: const TextInputType.numberWithOptions(
-                                      decimal: true,
+                                    keyboardType:
+                                        const TextInputType.numberWithOptions(
+                                          decimal: true,
+                                        ),
+                                    decoration: const InputDecoration(
+                                      labelText: 'Limit price (optional)',
+                                      helperText:
+                                          'For -STRIKE- templates this field is also used as the strike when placing the order.',
                                     ),
-                                    decoration: const InputDecoration(labelText: 'Strike price'),
-                                    onChanged: context.read<DlcCubit>().setPrice,
+                                    onChanged: context
+                                        .read<DlcCubit>()
+                                        .setPrice,
+                                  ),
+                                  const SizedBox(height: 8),
+                                  Text(
+                                    'Matching is exact quantity only (no partial fills). '
+                                    '“Filled” on an order is a market state, not guaranteed economic settlement.',
+                                    style: Theme.of(context).textTheme.bodySmall
+                                        ?.copyWith(
+                                          color: Theme.of(
+                                            context,
+                                          ).colorScheme.onSurfaceVariant,
+                                        ),
                                   ),
                                   const SizedBox(height: 8),
                                   ElevatedButton.icon(
-                                    onPressed: state.loading || state.auth == null
+                                    onPressed:
+                                        state.loading ||
+                                            state.auth == null ||
+                                            tradingBlocked
                                         ? null
-                                        : () => context.read<DlcCubit>().createOrder(),
+                                        : () => context
+                                              .read<DlcCubit>()
+                                              .createOrder(),
                                     icon: const Icon(Icons.add_chart),
                                     label: state.loading
                                         ? const Text('Creating...')
@@ -260,6 +319,7 @@ class _DlcHomeScreenState extends State<DlcHomeScreen> {
                             subtitle: 'Waiting for a match',
                             orders: openOrders,
                             processingOrder: state.processingOrder,
+                            showCancel: true,
                           ),
                           const SizedBox(height: 12),
                           _OrderGroupSection(
@@ -307,96 +367,175 @@ class _OverviewPanel extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        if (state.auth == null)
+        if (state.coordinatorTradingHint != null) ...[
           Card(
+            color: Theme.of(context).colorScheme.surfaceContainerHighest,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+              side: BorderSide(color: Theme.of(context).colorScheme.error),
+            ),
             child: Padding(
               padding: const EdgeInsets.all(12),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Row(
-                    children: [
-                      Icon(
-                        Icons.person_add_alt_1_outlined,
-                        size: 18,
-                        color: Theme.of(context).colorScheme.primary,
-                      ),
-                      const SizedBox(width: 6),
-                      Text(
-                        'Wallet registration',
-                        style: Theme.of(context).textTheme.titleSmall,
-                      ),
-                    ],
+                  Icon(
+                    Icons.warning_amber_rounded,
+                    size: 20,
+                    color: Theme.of(context).colorScheme.onErrorContainer,
                   ),
-                  const SizedBox(height: 8),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      state.coordinatorTradingHint!,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Theme.of(context).colorScheme.onErrorContainer,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+        ],
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  children: [
+                    Icon(
+                      Icons.shield_moon_outlined,
+                      size: 18,
+                      color: Theme.of(context).colorScheme.primary,
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      'Risk',
+                      style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  'DLC options can lock collateral and depend on oracle outcomes. '
+                  'Only extended public keys and signatures are sent to the coordinator; '
+                  'seeds and private keys stay on this device.',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 8),
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  children: [
+                    Icon(
+                      state.auth == null
+                          ? Icons.person_add_alt_1_outlined
+                          : Icons.verified_user_outlined,
+                      size: 18,
+                      color: Theme.of(context).colorScheme.primary,
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      state.auth == null
+                          ? 'Wallet registration'
+                          : 'Wallet registered',
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                if (state.auth == null) ...[
                   Text(
                     'Register only if you want this wallet on the DLC coordinator. Nothing is sent until you tap the button.',
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
                       color: Theme.of(context).colorScheme.onSurfaceVariant,
                     ),
                   ),
+                  const SizedBox(height: 10),
+                  DropdownButtonFormField<String>(
+                    initialValue: state.selectedRegistrationWalletOriginId,
+                    isExpanded: true,
+                    items: state.availableWallets
+                        .map(
+                          (wallet) => DropdownMenuItem(
+                            value: wallet.walletOriginId,
+                            child: Text(wallet.label),
+                          ),
+                        )
+                        .toList(),
+                    onChanged: state.loading
+                        ? null
+                        : (value) {
+                            if (value == null) return;
+                            context.read<DlcCubit>().setRegistrationWallet(
+                              value,
+                            );
+                          },
+                    decoration: const InputDecoration(
+                      labelText: 'Bitcoin wallet to register',
+                    ),
+                  ),
                   const SizedBox(height: 8),
                   ElevatedButton.icon(
-                    onPressed: state.loading
+                    onPressed:
+                        state.loading ||
+                            state.selectedRegistrationWalletOriginId == null
                         ? null
                         : () => context.read<DlcCubit>().registerWallet(),
                     icon: const Icon(Icons.link),
                     label: const Text('Register wallet'),
                   ),
+                ] else ...[
+                  InkWell(
+                    borderRadius: BorderRadius.circular(10),
+                    onTap: () => _openRegisteredWalletOverlay(context),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 4),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            state.auth!.walletLabel,
+                            style: Theme.of(context).textTheme.titleSmall
+                                ?.copyWith(fontWeight: FontWeight.w700),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            'Tap to view details or switch active wallet',
+                            style: Theme.of(context).textTheme.bodySmall
+                                ?.copyWith(
+                                  color: Theme.of(
+                                    context,
+                                  ).colorScheme.onSurfaceVariant,
+                                ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
                 ],
-              ),
-            ),
-          )
-        else
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(12),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Icon(
-                        Icons.verified_user_outlined,
-                        size: 18,
-                        color: Theme.of(context).colorScheme.primary,
-                      ),
-                      const SizedBox(width: 6),
-                      Text(
-                        'Wallet registered',
-                        style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'Coordinator wallet ID',
-                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  SelectableText(
-                    state.auth!.walletId,
-                    style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                  if (state.auth!.expiresAt != null) ...[
-                    const SizedBox(height: 8),
-                    Text(
-                      'Session expires (from API): ${DateFormat.yMMMd().add_jm().format(state.auth!.expiresAt!.toLocal())}',
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: Theme.of(context).colorScheme.onSurfaceVariant,
-                      ),
-                    ),
-                  ],
-                ],
-              ),
+              ],
             ),
           ),
+        ),
         const SizedBox(height: 8),
         _BarStatCard(
           title: 'Balance split',
@@ -427,15 +566,122 @@ class _OverviewPanel extends StatelessWidget {
         const SizedBox(height: 10),
         Text(
           'Recent DLC events',
-          style: Theme.of(context).textTheme.titleMedium,
+          style: Theme.of(
+            context,
+          ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
         ),
         const SizedBox(height: 6),
         Text(
           'No dedicated events endpoint exposed by coordinator API yet.',
           style: Theme.of(context).textTheme.bodySmall,
         ),
+        if (state.expiredWallets.isNotEmpty) ...[
+          const SizedBox(height: 12),
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(
+                        Icons.schedule_outlined,
+                        size: 18,
+                        color: Theme.of(context).colorScheme.primary,
+                      ),
+                      const SizedBox(width: 6),
+                      Text(
+                        'Expired DLC registrations',
+                        style: Theme.of(context).textTheme.titleMedium
+                            ?.copyWith(fontWeight: FontWeight.w600),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  ...state.expiredWallets.map(
+                    (item) => Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: Text(
+                        'Wallet ID: ${item.walletId}\nXPUB: ${item.xpub}',
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
       ],
     );
+  }
+
+  Future<void> _openRegisteredWalletOverlay(BuildContext context) async {
+    final auth = state.auth;
+    if (auth == null) return;
+    String draftOriginId = auth.walletOriginId;
+    final changed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setState) {
+            return AlertDialog(
+              title: const Text('Registered wallet'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Label: ${auth.walletLabel}'),
+                  const SizedBox(height: 6),
+                  SelectableText('Wallet ID: ${auth.walletId}'),
+                  if (auth.expiresAt != null) ...[
+                    const SizedBox(height: 6),
+                    Text(
+                      'Expires: ${DateFormat.yMMMd().add_jm().format(auth.expiresAt!.toLocal())}',
+                    ),
+                  ],
+                  const SizedBox(height: 10),
+                  DropdownButtonFormField<String>(
+                    initialValue: draftOriginId,
+                    isExpanded: true,
+                    items: state.registeredWalletAuths
+                        .map(
+                          (item) => DropdownMenuItem(
+                            value: item.walletOriginId,
+                            child: Text(item.walletLabel),
+                          ),
+                        )
+                        .toList(),
+                    onChanged: (value) {
+                      if (value == null) return;
+                      setState(() => draftOriginId = value);
+                    },
+                    decoration: const InputDecoration(
+                      labelText: 'Switch active registered wallet',
+                    ),
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(false),
+                  child: const Text('Close'),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(true),
+                  child: const Text('Switch'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+    if (changed == true && draftOriginId != auth.walletOriginId) {
+      // ignore: use_build_context_synchronously
+      await context.read<DlcCubit>().switchActiveWallet(draftOriginId);
+    }
   }
 }
 
@@ -465,7 +711,12 @@ class _BarStatCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(title, style: Theme.of(context).textTheme.titleSmall),
+            Text(
+              title,
+              style: Theme.of(
+                context,
+              ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
+            ),
             const SizedBox(height: 8),
             LinearProgressIndicator(value: ratio),
             const SizedBox(height: 8),
@@ -490,6 +741,7 @@ class _OrderGroupSection extends StatelessWidget {
     required this.orders,
     required this.processingOrder,
     this.allowFill = true,
+    this.showCancel = false,
   });
 
   final String title;
@@ -497,60 +749,129 @@ class _OrderGroupSection extends StatelessWidget {
   final List<DlcOrderSummary> orders;
   final bool processingOrder;
   final bool allowFill;
+  final bool showCancel;
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Icon(
-              allowFill ? Icons.pending_actions_outlined : Icons.task_alt_outlined,
-              size: 18,
-              color: Theme.of(context).colorScheme.primary,
+            Row(
+              children: [
+                Icon(
+                  allowFill
+                      ? Icons.pending_actions_outlined
+                      : Icons.task_alt_outlined,
+                  size: 18,
+                  color: Theme.of(context).colorScheme.primary,
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  title,
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
             ),
-            const SizedBox(width: 6),
-            Text(title, style: Theme.of(context).textTheme.titleMedium),
+            const SizedBox(height: 2),
+            Text(subtitle, style: Theme.of(context).textTheme.bodySmall),
+            const SizedBox(height: 8),
+            if (orders.isEmpty)
+              const ListTile(
+                dense: true,
+                title: Text('No orders in this section'),
+              )
+            else
+              ...orders.map(
+                (order) => ListTile(
+                  title: Text('Order ${order.orderId}'),
+                  subtitle: Text(_formatOrderSummary(order)),
+                  trailing: allowFill
+                      ? Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            if (showCancel)
+                              Padding(
+                                padding: const EdgeInsets.only(right: 6),
+                                child: OutlinedButton(
+                                  onPressed: processingOrder
+                                      ? null
+                                      : () => context
+                                            .read<DlcCubit>()
+                                            .cancelOpenOrder(order.orderId),
+                                  child: const Text('Cancel'),
+                                ),
+                              ),
+                            OutlinedButton(
+                              onPressed: processingOrder
+                                  ? null
+                                  : () => context
+                                        .read<DlcCubit>()
+                                        .processOrderLifecycle(order.orderId),
+                              child: const Text('Continue'),
+                            ),
+                          ],
+                        )
+                      : null,
+                ),
+              ),
           ],
         ),
-        const SizedBox(height: 2),
-        Text(subtitle, style: Theme.of(context).textTheme.bodySmall),
-        const SizedBox(height: 8),
-        if (orders.isEmpty)
-          Card(
-            child: ListTile(
-              dense: true,
-              title: const Text('No orders in this section'),
-            ),
-          )
-        else
-          ...orders.map(
-            (order) => Card(
-              child: ListTile(
-                title: Text('Order ${order.orderId}'),
-                subtitle: Text(
-                  'Status: ${order.status}${order.dlcId != null ? '\nDLC: ${order.dlcId}' : ''}',
-                ),
-                trailing: allowFill
-                    ? ElevatedButton(
-                        onPressed: processingOrder
-                            ? null
-                            : () => context.read<DlcCubit>().fulfillOrder(order.orderId),
-                        child: const Text('Fill'),
-                      )
-                    : null,
-              ),
-            ),
-          ),
-      ],
+      ),
     );
   }
 }
 
+String _formatOrderSummary(DlcOrderSummary order) {
+  final lines = <String>[];
+  if (order.instrumentId != null && order.instrumentId!.isNotEmpty) {
+    lines.add('Instrument: ${order.instrumentId}');
+  }
+  final side = order.side;
+  final qty = order.quantity;
+  if (side != null || qty != null || order.price != null) {
+    final qtyStr = qty != null ? qty.toStringAsFixed(0) : '-';
+    final priceStr = order.price != null ? ' · Limit: ${order.price}' : '';
+    lines.add('Side: ${side ?? '-'} · Quantity: $qtyStr$priceStr');
+  }
+  lines.add('Order status: ${order.status}');
+  if (order.dlcStatus != null) lines.add('DLC status: ${order.dlcStatus}');
+  if (order.signRequired == true) {
+    lines.add('Action required: maker sign');
+  }
+  if (order.confirmationStatus != null) {
+    lines.add('Confirmation: ${order.confirmationStatus}');
+  }
+  if (order.settlementType != null) {
+    lines.add('Settlement: ${order.settlementType}');
+  }
+  if (order.dlcId != null) lines.add('DLC: ${order.dlcId}');
+  if (order.fundingTxid != null) {
+    lines.add('Funding txid: ${order.fundingTxid}');
+  }
+  if (order.oracleOutcomeValue != null) {
+    lines.add('Oracle outcome: ${order.oracleOutcomeValue}');
+  }
+  if (order.lastErrorReason != null) {
+    final msg = order.lastErrorMessage;
+    lines.add(
+      msg != null && msg.isNotEmpty
+          ? 'Last error: ${order.lastErrorReason} — $msg'
+          : 'Last error: ${order.lastErrorReason}',
+    );
+  }
+  return lines.join('\n');
+}
+
 bool _isOpenOrder(DlcOrderSummary order) {
   final status = order.status.toLowerCase();
-  return status == 'open' || status == 'pending_accept' || order.pendingMatchAccept;
+  return status == 'open' ||
+      status == 'pending_accept' ||
+      order.pendingMatchAccept;
 }
 
 bool _isClosedOrder(DlcOrderSummary order) {
@@ -576,22 +897,130 @@ bool _isLiveOrder(DlcOrderSummary order) {
       order.dlcId != null;
 }
 
+bool _tradingBlocked(DlcState state) {
+  final hint = state.coordinatorTradingHint?.toLowerCase() ?? '';
+  return hint.contains('switch the app environment') ||
+      hint.contains('does not report testnet') ||
+      hint.contains('reports regtest while this app environment is mainnet');
+}
+
+String _instrumentDisplayId(String? rawId) {
+  if (rawId == null || rawId.isEmpty) return '-';
+  return rawId.replaceAll('-STRIKE-', '-');
+}
+
 /// Orderbook depth for one instrument: highlights which contract is shown and
 /// exposes a full-width instrument picker.
 class _OrderbookInstrumentCard extends StatelessWidget {
   const _OrderbookInstrumentCard({
     required this.state,
-    required this.filteredInstruments,
-    required this.initialInstrument,
     required this.selectedInstrument,
     required this.loading,
   });
 
   final DlcState state;
-  final List<Map<String, dynamic>> filteredInstruments;
-  final String? initialInstrument;
   final Map<String, dynamic>? selectedInstrument;
   final bool loading;
+
+  Future<void> _openPickerOverlay(BuildContext context) async {
+    DlcOptionType draftOption = state.optionType;
+    String? draftInstrumentId = state.selectedInstrumentId;
+    final accepted = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setState) {
+            final options = state.instruments
+                .where((i) => dlcInstrumentMatchesOptionType(i, draftOption))
+                .toList();
+            if (!options.any((i) => dlcInstrumentId(i) == draftInstrumentId)) {
+              draftInstrumentId = options.isEmpty
+                  ? null
+                  : dlcInstrumentId(options.first);
+            }
+            final selected = options.firstWhere(
+              (i) => dlcInstrumentId(i) == draftInstrumentId,
+              orElse: () =>
+                  options.isNotEmpty ? options.first : <String, dynamic>{},
+            );
+            final oracle = (selected['oracle_label'] ?? '').toString().trim();
+            final oracleText = oracle.isEmpty ? 'Unknown' : oracle;
+            return AlertDialog(
+              title: const Text('Change instrument'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Instruments use the oracle: $oracleText',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                  const SizedBox(height: 10),
+                  DropdownButtonFormField<String>(
+                    initialValue: draftInstrumentId,
+                    isExpanded: true,
+                    items: options
+                        .map(
+                          (i) => DropdownMenuItem(
+                            value: dlcInstrumentId(i),
+                            child: Text(
+                              _instrumentDisplayId(dlcInstrumentId(i)),
+                            ),
+                          ),
+                        )
+                        .toList(),
+                    onChanged: (value) =>
+                        setState(() => draftInstrumentId = value),
+                    decoration: const InputDecoration(labelText: 'Instrument'),
+                  ),
+                  const SizedBox(height: 10),
+                  ToggleButtons(
+                    isSelected: [
+                      draftOption == DlcOptionType.call,
+                      draftOption == DlcOptionType.put,
+                    ],
+                    onPressed: (index) {
+                      setState(() {
+                        draftOption = index == 0
+                            ? DlcOptionType.call
+                            : DlcOptionType.put;
+                      });
+                    },
+                    children: const [
+                      Padding(
+                        padding: EdgeInsets.symmetric(horizontal: 14),
+                        child: Text('Call'),
+                      ),
+                      Padding(
+                        padding: EdgeInsets.symmetric(horizontal: 14),
+                        child: Text('Put'),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(false),
+                  child: const Text('Cancel'),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(true),
+                  child: const Text('Accept'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+    if (accepted == true) {
+      context.read<DlcCubit>().setOptionType(draftOption);
+      if (draftInstrumentId != null) {
+        context.read<DlcCubit>().setInstrument(draftInstrumentId);
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -603,8 +1032,33 @@ class _OrderbookInstrumentCard extends StatelessWidget {
     final expiry = selectedInstrument != null
         ? dlcInstrumentExpiresAt(selectedInstrument!)
         : null;
+    String? optionLabel;
+    String? strikeLabel;
+    String? underlyingLabel;
+    if (selectedInstrument != null) {
+      final metadata = dlcInstrumentMetadata(selectedInstrument!);
+      strikeLabel = metadata.strike;
+      underlyingLabel = metadata.underlying;
+      final rawType = (selectedInstrument!['type'] ?? '')
+          .toString()
+          .toLowerCase();
+      if (rawType == 'call' || rawType == 'c') {
+        optionLabel = 'CALL';
+      } else if (rawType == 'put' || rawType == 'p') {
+        optionLabel = 'PUT';
+      } else {
+        final instrumentId = (dlcInstrumentId(selectedInstrument!) ?? '')
+            .toUpperCase();
+        if (instrumentId.endsWith('-C') || instrumentId.contains('CALL')) {
+          optionLabel = 'CALL';
+        } else if (instrumentId.endsWith('-P') ||
+            instrumentId.contains('PUT')) {
+          optionLabel = 'PUT';
+        }
+      }
+    }
     final expiryText = expiry != null
-        ? '${DateFormat.yMMMd().format(expiry.toUtc())} UTC'
+        ? '${DateFormat.yMMMd().add_Hm().format(expiry.toUtc())} UTC'
         : null;
 
     return Card(
@@ -621,19 +1075,12 @@ class _OrderbookInstrumentCard extends StatelessWidget {
                 Expanded(
                   child: Text(
                     'Orderbook',
-                    style: theme.textTheme.titleLarge?.copyWith(
+                    style: theme.textTheme.titleMedium?.copyWith(
                       fontWeight: FontWeight.w600,
                     ),
                   ),
                 ),
               ],
-            ),
-            const SizedBox(height: 4),
-            Text(
-              'Bids and asks below are for the instrument you select.',
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: colorScheme.onSurfaceVariant,
-              ),
             ),
             const SizedBox(height: 12),
             DecoratedBox(
@@ -642,136 +1089,58 @@ class _OrderbookInstrumentCard extends StatelessWidget {
                 borderRadius: BorderRadius.circular(12),
                 border: Border.all(color: colorScheme.outlineVariant),
               ),
-              child: Padding(
-                padding: const EdgeInsets.all(12),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'LISTING ORDERBOOK FOR',
-                      style: theme.textTheme.labelSmall?.copyWith(
-                        letterSpacing: 0.5,
-                        color: colorScheme.onSurfaceVariant,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    if (id != null) ...[
-                      SelectableText(
-                        id,
-                        style: theme.textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                      if (selectedInstrument!['oracle_label'] != null &&
-                          selectedInstrument!['oracle_label']
-                              .toString()
-                              .trim()
-                              .isNotEmpty)
-                        Padding(
-                          padding: const EdgeInsets.only(top: 4),
-                          child: Text(
-                            'Oracle: ${selectedInstrument!['oracle_label']}',
-                            style: theme.textTheme.bodySmall?.copyWith(
-                              color: colorScheme.onSurfaceVariant,
-                            ),
-                          ),
-                        ),
-                      if (expiryText != null)
-                        Padding(
-                          padding: const EdgeInsets.only(top: 2),
-                          child: Text(
-                            'Expiry: $expiryText',
-                            style: theme.textTheme.bodySmall?.copyWith(
-                              color: colorScheme.onSurfaceVariant,
-                            ),
-                          ),
-                        ),
-                    ] else
+              child: InkWell(
+                borderRadius: BorderRadius.circular(12),
+                onTap: loading ? null : () => _openPickerOverlay(context),
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
                       Text(
-                        'No instrument selected — pick one under “Change instrument”.',
-                        style: theme.textTheme.bodyMedium?.copyWith(
+                        'LISTING ORDERBOOK FOR (click to change)',
+                        style: theme.textTheme.labelSmall?.copyWith(
+                          letterSpacing: 0.5,
                           color: colorScheme.onSurfaceVariant,
+                          fontWeight: FontWeight.w600,
                         ),
                       ),
-                  ],
+                      const SizedBox(height: 6),
+                      if (id != null) ...[
+                        SelectableText(
+                          _instrumentDisplayId(id),
+                          style: theme.textTheme.titleMedium?.copyWith(
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        if (expiryText != null)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 2),
+                            child: Text(
+                              [
+                                ?underlyingLabel,
+                                optionLabel ?? '-',
+                                ?(strikeLabel == null
+                                    ? null
+                                    : 'Strike: $strikeLabel'),
+                                'Expiry: $expiryText',
+                              ].join(' | '),
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: colorScheme.onSurfaceVariant,
+                              ),
+                            ),
+                          ),
+                      ] else
+                        Text(
+                          'No instrument selected — tap to choose.',
+                          style: theme.textTheme.bodyMedium?.copyWith(
+                            color: colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                    ],
+                  ),
                 ),
               ),
-            ),
-            const SizedBox(height: 16),
-            Text(
-              'Change instrument',
-              style: theme.textTheme.titleSmall?.copyWith(
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              'Choose which contract’s orderbook to view (from coordinator API).',
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: colorScheme.onSurfaceVariant,
-              ),
-            ),
-            const SizedBox(height: 8),
-            DropdownButtonFormField<String>(
-              key: ValueKey<String?>(
-                '${state.optionType.name}_${state.selectedInstrumentId}',
-              ),
-              initialValue: initialInstrument,
-              isExpanded: true,
-              items: filteredInstruments
-                  .map(
-                    (instrument) => DropdownMenuItem(
-                      value: dlcInstrumentId(instrument),
-                      child: Text(
-                        dlcInstrumentLabel(instrument),
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                  )
-                  .toList(),
-              onChanged: loading
-                  ? null
-                  : (value) => context.read<DlcCubit>().setInstrument(value),
-              decoration: InputDecoration(
-                filled: true,
-                labelText: 'Instrument',
-                hintText: 'Select contract',
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-              ),
-            ),
-            const SizedBox(height: 10),
-            Text(
-              'Option type',
-              style: theme.textTheme.titleSmall?.copyWith(
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-            const SizedBox(height: 6),
-            ToggleButtons(
-              isSelected: [
-                state.optionType == DlcOptionType.call,
-                state.optionType == DlcOptionType.put,
-              ],
-              onPressed: loading
-                  ? null
-                  : (index) {
-                      context.read<DlcCubit>().setOptionType(
-                        index == 0 ? DlcOptionType.call : DlcOptionType.put,
-                      );
-                    },
-              children: const [
-                Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 14),
-                  child: Text('Call'),
-                ),
-                Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 14),
-                  child: Text('Put'),
-                ),
-              ],
             ),
             const SizedBox(height: 20),
             if (id != null) ...[
@@ -787,7 +1156,7 @@ class _OrderbookInstrumentCard extends StatelessWidget {
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
-                      id,
+                      _instrumentDisplayId(id),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: theme.textTheme.labelSmall?.copyWith(
@@ -799,15 +1168,17 @@ class _OrderbookInstrumentCard extends StatelessWidget {
               ),
               const SizedBox(height: 4),
             ],
-            ...state.orderbookAsks.take(10).map(
-              (ask) => ListTile(
-                dense: true,
-                leading: const Text('ASK'),
-                title: Text(
-                  'Price ${ask['price']} — Qty ${ask['quantity'] ?? ask['amount'] ?? '-'}',
+            ...state.orderbookAsks
+                .take(10)
+                .map(
+                  (ask) => ListTile(
+                    dense: true,
+                    leading: const Text('ASK'),
+                    title: Text(
+                      'Price ${ask['price']} — Quantity ${ask['quantity'] ?? ask['amount'] ?? '-'}',
+                    ),
+                  ),
                 ),
-              ),
-            ),
             if (id != null) ...[
               const SizedBox(height: 12),
               Row(
@@ -822,7 +1193,7 @@ class _OrderbookInstrumentCard extends StatelessWidget {
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
-                      id,
+                      _instrumentDisplayId(id),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: theme.textTheme.labelSmall?.copyWith(
@@ -834,15 +1205,17 @@ class _OrderbookInstrumentCard extends StatelessWidget {
               ),
               const SizedBox(height: 4),
             ],
-            ...state.orderbookBids.take(10).map(
-              (bid) => ListTile(
-                dense: true,
-                leading: const Text('BID'),
-                title: Text(
-                  'Price ${bid['price']} — Qty ${bid['quantity'] ?? bid['amount'] ?? '-'}',
+            ...state.orderbookBids
+                .take(10)
+                .map(
+                  (bid) => ListTile(
+                    dense: true,
+                    leading: const Text('BID'),
+                    title: Text(
+                      'Price ${bid['price']} — Quantity ${bid['quantity'] ?? bid['amount'] ?? '-'}',
+                    ),
+                  ),
                 ),
-              ),
-            ),
             if (id != null &&
                 state.orderbookAsks.isEmpty &&
                 state.orderbookBids.isEmpty)

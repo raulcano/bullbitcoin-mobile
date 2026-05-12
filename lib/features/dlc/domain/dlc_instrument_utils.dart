@@ -1,5 +1,19 @@
 import 'package:bb_mobile/features/dlc/domain/dlc_models.dart';
 
+class DlcInstrumentMetadata {
+  final String underlying;
+  final String? expiryToken;
+  final String? strike;
+  final DlcOptionType? right;
+
+  const DlcInstrumentMetadata({
+    required this.underlying,
+    required this.expiryToken,
+    required this.strike,
+    required this.right,
+  });
+}
+
 /// Uses coordinator [InstrumentResponse.type] (`call` / `put`) when present.
 bool dlcInstrumentMatchesOptionType(
   Map<String, dynamic> instrument,
@@ -27,6 +41,32 @@ String? dlcInstrumentId(Map<String, dynamic> instrument) {
   if (v == null) return null;
   final s = v.toString();
   return s.isEmpty ? null : s;
+}
+
+DlcInstrumentMetadata dlcInstrumentMetadata(Map<String, dynamic> instrument) {
+  final id = dlcInstrumentId(instrument) ?? '';
+  final parts = id.split('-');
+  final rawType = (instrument['type'] ?? '').toString().trim().toLowerCase();
+  DlcOptionType? right;
+  if (rawType == 'call' || rawType == 'c') {
+    right = DlcOptionType.call;
+  } else if (rawType == 'put' || rawType == 'p') {
+    right = DlcOptionType.put;
+  } else if (parts.isNotEmpty) {
+    final suffix = parts.last.toUpperCase();
+    if (suffix == 'C' || suffix == 'CALL') {
+      right = DlcOptionType.call;
+    } else if (suffix == 'P' || suffix == 'PUT') {
+      right = DlcOptionType.put;
+    }
+  }
+
+  return DlcInstrumentMetadata(
+    underlying: parts.isEmpty || parts.first.isEmpty ? 'BTC' : parts.first,
+    expiryToken: parts.length > 1 ? parts[1] : null,
+    strike: parts.length > 2 ? parts[2] : null,
+    right: right,
+  );
 }
 
 /// Short label for dropdowns (API id + optional oracle label).

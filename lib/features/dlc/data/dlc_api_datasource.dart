@@ -10,7 +10,48 @@ class DlcApiDatasource {
     required Dio dio,
     required SettingsRepository settingsRepository,
   }) : _dio = dio,
-       _settingsRepository = settingsRepository;
+       _settingsRepository = settingsRepository {
+    _dio.interceptors.add(
+      InterceptorsWrapper(
+        onError: (exception, handler) async {
+          if (!_shouldTryBackup(exception)) {
+            handler.next(exception);
+            return;
+          }
+
+          final settings = await _settingsRepository.fetch();
+          final backup =
+              ApiServiceConstants.dlcCoordinatorBackupUrlForEnvironment(
+                settings.environment,
+              );
+          if (backup == null) {
+            handler.next(exception);
+            return;
+          }
+
+          final request = exception.requestOptions;
+          if (request.extra['dlc_backup_attempt'] == true) {
+            handler.next(exception);
+            return;
+          }
+
+          try {
+            final retry = request.copyWith(
+              baseUrl: backup,
+              extra: {...request.extra, 'dlc_backup_attempt': true},
+            );
+            _dio.options.baseUrl = backup;
+            final response = await _dio.fetch<dynamic>(retry);
+            handler.resolve(response);
+          } on DioException catch (backupException) {
+            handler.next(backupException);
+          } catch (_) {
+            handler.next(exception);
+          }
+        },
+      ),
+    );
+  }
 
   Future<void> _ensureBaseUrl() async {
     final settings = await _settingsRepository.fetch();
@@ -22,10 +63,21 @@ class DlcApiDatasource {
     }
   }
 
+  bool _shouldTryBackup(DioException exception) {
+    return exception.type == DioExceptionType.connectionTimeout ||
+        exception.type == DioExceptionType.sendTimeout ||
+        exception.type == DioExceptionType.receiveTimeout ||
+        exception.type == DioExceptionType.connectionError ||
+        exception.type == DioExceptionType.unknown;
+  }
+
   Future<Map<String, dynamic>> createNonce() async {
     await _ensureBaseUrl();
     try {
-      final response = await _dio.post('/auth/nonce', data: <String, dynamic>{});
+      final response = await _dio.post(
+        '/auth/nonce',
+        data: <String, dynamic>{},
+      );
       return (response.data as Map<String, dynamic>);
     } on DioException catch (e) {
       throw Exception(_readApiError(e));
@@ -67,6 +119,19 @@ class DlcApiDatasource {
     }
   }
 
+  Future<Map<String, dynamic>> getSystemReadiness() async {
+    await _ensureBaseUrl();
+    try {
+      final response = await _dio.get('/auth/system-readiness');
+      final data = response.data;
+      if (data is Map<String, dynamic>) return data;
+      if (data is Map) return Map<String, dynamic>.from(data);
+      return const {};
+    } on DioException catch (e) {
+      throw Exception(_readApiError(e));
+    }
+  }
+
   Future<Map<String, dynamic>> createOrder({
     required String token,
     required Map<String, dynamic> payload,
@@ -92,6 +157,44 @@ class DlcApiDatasource {
         options: Options(headers: {'Authorization': 'Bearer $token'}),
       );
       return (response.data as List<dynamic>? ?? const []);
+    } on DioException catch (e) {
+      throw Exception(_readApiError(e));
+    }
+  }
+
+  Future<Map<String, dynamic>> cancelOrder({
+    required String token,
+    required String orderId,
+  }) async {
+    await _ensureBaseUrl();
+    try {
+      final response = await _dio.post(
+        '/orders/$orderId/cancel',
+        options: Options(headers: {'Authorization': 'Bearer $token'}),
+      );
+      final data = response.data;
+      if (data is Map<String, dynamic>) return data;
+      if (data is Map) return Map<String, dynamic>.from(data);
+      return const {};
+    } on DioException catch (e) {
+      throw Exception(_readApiError(e));
+    }
+  }
+
+  Future<Map<String, dynamic>> refreshWalletBalance({
+    required String token,
+    required String walletId,
+  }) async {
+    await _ensureBaseUrl();
+    try {
+      final response = await _dio.post(
+        '/auth/wallet/$walletId/refresh-balance',
+        options: Options(headers: {'Authorization': 'Bearer $token'}),
+      );
+      final data = response.data;
+      if (data is Map<String, dynamic>) return data;
+      if (data is Map) return Map<String, dynamic>.from(data);
+      return const {};
     } on DioException catch (e) {
       throw Exception(_readApiError(e));
     }
@@ -241,6 +344,79 @@ class DlcApiDatasource {
     }
   }
 
+  Future<Map<String, dynamic>> getDlc({
+    required String token,
+    required String dlcId,
+  }) async {
+    await _ensureBaseUrl();
+    try {
+      final response = await _dio.get(
+        '/dlcs/$dlcId',
+        options: Options(headers: {'Authorization': 'Bearer $token'}),
+      );
+      return (response.data as Map<String, dynamic>);
+    } on DioException catch (e) {
+      throw Exception(_readApiError(e));
+    }
+  }
+
+  Future<Map<String, dynamic>> getDlcFundingTransaction({
+    required String token,
+    required String dlcId,
+  }) async {
+    await _ensureBaseUrl();
+    try {
+      final response = await _dio.get(
+        '/dlcs/$dlcId/funding-transaction',
+        options: Options(headers: {'Authorization': 'Bearer $token'}),
+      );
+      final data = response.data;
+      if (data is Map<String, dynamic>) return data;
+      if (data is Map) return Map<String, dynamic>.from(data);
+      return const {};
+    } on DioException catch (e) {
+      throw Exception(_readApiError(e));
+    }
+  }
+
+  Future<Map<String, dynamic>> getDlcPayoutData({
+    required String token,
+    required String dlcId,
+  }) async {
+    await _ensureBaseUrl();
+    try {
+      final response = await _dio.get(
+        '/dlcs/$dlcId/payout-data',
+        options: Options(headers: {'Authorization': 'Bearer $token'}),
+      );
+      final data = response.data;
+      if (data is Map<String, dynamic>) return data;
+      if (data is Map) return Map<String, dynamic>.from(data);
+      return const {};
+    } on DioException catch (e) {
+      throw Exception(_readApiError(e));
+    }
+  }
+
+  Future<Map<String, dynamic>> getDlcAttestation({
+    required String token,
+    required String dlcId,
+  }) async {
+    await _ensureBaseUrl();
+    try {
+      final response = await _dio.get(
+        '/dlcs/$dlcId/attestation',
+        options: Options(headers: {'Authorization': 'Bearer $token'}),
+      );
+      final data = response.data;
+      if (data is Map<String, dynamic>) return data;
+      if (data is Map) return Map<String, dynamic>.from(data);
+      return const {};
+    } on DioException catch (e) {
+      throw Exception(_readApiError(e));
+    }
+  }
+
   Future<Map<String, dynamic>> getOrderbook({
     required String instrumentId,
   }) async {
@@ -265,9 +441,27 @@ class DlcApiDatasource {
         }
         if (message != null) return message;
       }
+      if (detail is List) {
+        final messages = detail
+            .map((item) {
+              if (item is Map) {
+                final loc = item['loc'] is List
+                    ? (item['loc'] as List).join('.')
+                    : item['loc']?.toString();
+                final msg = item['msg']?.toString();
+                if (loc != null && msg != null) return '$loc: $msg';
+                return msg ?? item.toString();
+              }
+              return item.toString();
+            })
+            .join('; ');
+        if (messages.isNotEmpty) return messages;
+      }
       if (detail is String) return detail;
       if (data['message'] is String) return data['message'] as String;
     }
-    return exception.message ?? 'DLC API request failed';
+    final code = exception.response?.statusCode;
+    final prefix = code == null ? '' : 'HTTP $code: ';
+    return '$prefix${exception.message ?? 'DLC API request failed'}';
   }
 }

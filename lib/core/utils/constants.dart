@@ -105,10 +105,24 @@ class ApiServiceConstants {
       dotenv.env['BB_API_TEST_URL'] ?? 'https://api05.bullbitcoin.dev';
   static String dlcCoordinatorBaseUrl =
       dotenv.env['DLC_COORDINATOR_URL'] ?? 'http://localhost:8000';
+  static String dlcCoordinatorBackupBaseUrl =
+      dotenv.env['DLC_COORDINATOR_BACKUP_URL'] ?? '';
   static String dlcCoordinatorTestBaseUrl =
       dotenv.env['DLC_COORDINATOR_TEST_URL'] ??
       dotenv.env['DLC_COORDINATOR_URL'] ??
       'http://localhost:8000';
+  static String dlcCoordinatorTestBackupBaseUrl =
+      dotenv.env['DLC_COORDINATOR_TEST_BACKUP_URL'] ??
+      dotenv.env['DLC_COORDINATOR_BACKUP_URL'] ??
+      '';
+
+  /// Bull Bitcoin partner integration token for coordinator order/DLC routes.
+  /// Not user-editable; set via build env / `.env` for supported deployments.
+  static String dlcCoordinatorPartnerToken =
+      dotenv.env['DLC_COORDINATOR_PARTNER_TOKEN'] ?? '';
+
+  static bool get dlcCoordinatorPartnerTokenConfigured =>
+      dlcCoordinatorPartnerToken.trim().isNotEmpty;
 
   /// Normalized base URL for DLC coordinator (no trailing slash), for the
   /// current app environment.
@@ -116,10 +130,27 @@ class ApiServiceConstants {
     final raw = environment.isTestnet
         ? dlcCoordinatorTestBaseUrl
         : dlcCoordinatorBaseUrl;
-    final trimmed = raw.trim();
-    if (trimmed.isEmpty) return 'http://localhost:8000';
+    return _normalizeDlcCoordinatorUrl(raw) ?? 'http://localhost:8000';
+  }
+
+  static String? dlcCoordinatorBackupUrlForEnvironment(
+    Environment environment,
+  ) {
+    final raw = environment.isTestnet
+        ? dlcCoordinatorTestBackupBaseUrl
+        : dlcCoordinatorBackupBaseUrl;
+    final normalized = _normalizeDlcCoordinatorUrl(raw);
+    final primary = dlcCoordinatorUrlForEnvironment(environment);
+    if (normalized == null || normalized == primary) return null;
+    return normalized;
+  }
+
+  static String? _normalizeDlcCoordinatorUrl(String? raw, {String? fallback}) {
+    final trimmed = (raw ?? '').trim();
+    if (trimmed.isEmpty) return fallback;
     return trimmed.replaceAll(RegExp(r'/+$'), '');
   }
+
   static String bbAuthUrl = 'https://${dotenv.env['BB_AUTH_URL']}';
   static String bbAuthTestUrl = 'https://${dotenv.env['BB_AUTH_TEST_URL']}';
   static String bbKycUrl = 'https://app.bullbitcoin.com/kyc';

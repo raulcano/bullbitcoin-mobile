@@ -33,14 +33,33 @@ class DlcLocalSigner {
       onlyBitcoin: true,
     );
     if (wallets.isEmpty) {
-      throw Exception('No default Bitcoin wallet found for ${environment.name}.');
+      throw Exception(
+        'No default Bitcoin wallet found for ${environment.name}.',
+      );
     }
     return wallets.first;
   }
 
-  Future<String> deriveFundingPubkeyHex({
-    required Wallet wallet,
+  Future<List<Wallet>> getBitcoinWallets(Environment environment) async {
+    return _walletRepository.getWallets(
+      environment: environment,
+      onlyBitcoin: true,
+    );
+  }
+
+  Future<Wallet> getBitcoinWalletByOriginId({
+    required Environment environment,
+    required String walletOriginId,
   }) async {
+    final wallets = await getBitcoinWallets(environment);
+    final match = wallets.where((w) => w.id == walletOriginId);
+    if (match.isEmpty) {
+      throw Exception('Bitcoin wallet not found: $walletOriginId');
+    }
+    return match.first;
+  }
+
+  Future<String> deriveFundingPubkeyHex({required Wallet wallet}) async {
     final seed = await _seedRepository.get(wallet.masterFingerprint);
     final key = _deriveDlcKey(seedBytes: seed.bytes, wallet: wallet);
     return key.public.toHexString();
@@ -64,7 +83,10 @@ class DlcLocalSigner {
     required String nonce,
   }) async {
     final seed = await _seedRepository.get(wallet.masterFingerprint);
-    final accountKey = _deriveWalletAccountKey(seedBytes: seed.bytes, wallet: wallet);
+    final accountKey = _deriveWalletAccountKey(
+      seedBytes: seed.bytes,
+      wallet: wallet,
+    );
     final interactionKey = _deriveDlcKey(seedBytes: seed.bytes, wallet: wallet);
     final nonceHex = utf8.encode(nonce).toHexString();
 
@@ -122,13 +144,14 @@ class DlcLocalSigner {
     final key = _deriveDlcKey(seedBytes: seed.bytes, wallet: wallet);
 
     final jobs = (context['cet_signing_jobs'] as List<dynamic>? ?? const []);
+    // Coordinator expects serialized CET *adaptor* signatures (see OpenAPI, e.g. 162-byte payloads).
+    // Until a vetted adaptor implementation is wired here, we emit compact ECDSA hex over the
+    // provided message hash so request ordering and binding can be tested end-to-end.
     final cetSigs = jobs.map((job) {
       final map = job as Map<String, dynamic>;
       final messageHashHex = map['message_hash_hex'] as String?;
       if (messageHashHex == null || messageHashHex.isEmpty) {
-        final fallback = sha256
-            .convert(utf8.encode(jsonEncode(map)))
-            .bytes;
+        final fallback = sha256.convert(utf8.encode(jsonEncode(map))).bytes;
         final signed = key.sign(Uint8List.fromList(fallback));
         return Uint8List.fromList(signed).toHexString();
       }
@@ -142,18 +165,31 @@ class DlcLocalSigner {
         : hex.decode(refundSighashHex);
     final refundSignature = key.sign(Uint8List.fromList(refundHash));
 
-    final fundingHashes = (context['funding_input_sighashes_hex'] as List<dynamic>? ??
-        const []);
-    final fundingHash = fundingHashes.isNotEmpty
-        ? hex.decode(fundingHashes.first as String)
-        : sha256.convert(utf8.encode('$contextTag:funding')).bytes;
-    final fundingSignature = key.sign(Uint8List.fromList(fundingHash));
+    final fundingHashes =
+        (context['funding_input_sighashes_hex'] as List<dynamic>? ?? const []);
+    final fundingSignaturesHex = <String>[];
+    if (fundingHashes.isEmpty) {
+      final digest = sha256.convert(utf8.encode('$contextTag:funding')).bytes;
+      final fundingSignature = key.sign(Uint8List.fromList(digest));
+      fundingSignaturesHex.add(
+        Uint8List.fromList(fundingSignature).toHexString(),
+      );
+    } else {
+      for (final h in fundingHashes) {
+        final hexStr = h as String;
+        final digest = hex.decode(hexStr);
+        final fundingSignature = key.sign(Uint8List.fromList(digest));
+        fundingSignaturesHex.add(
+          Uint8List.fromList(fundingSignature).toHexString(),
+        );
+      }
+    }
 
     return DlcSigningResult(
       fundingPubkeyHex: fundingPubkeyHex,
       cetAdaptorSignaturesHex: cetSigs,
       refundSignatureHex: Uint8List.fromList(refundSignature).toHexString(),
-      fundingSignaturesHex: [Uint8List.fromList(fundingSignature).toHexString()],
+      fundingSignaturesHex: fundingSignaturesHex,
     );
   }
 
@@ -177,7 +213,9 @@ class DlcLocalSigner {
 
   String _toDerHex(Uint8List compactSignature, {bool includeHashType = false}) {
     if (compactSignature.length != 64) {
-      throw Exception('Invalid compact signature length: ${compactSignature.length}');
+      throw Exception(
+        'Invalid compact signature length: ${compactSignature.length}',
+      );
     }
 
     final r = _trimLeadingZeros(compactSignature.sublist(0, 32));
@@ -213,5 +251,4 @@ class DlcLocalSigner {
     }
     return bytes.sublist(index);
   }
-
 }

@@ -6,41 +6,39 @@ void main() {
   group('dlcInstrumentMatchesOptionType', () {
     test('matches API type field call/put (lowercase)', () {
       expect(
-        dlcInstrumentMatchesOptionType(
-          {'instrument_id': 'X', 'type': 'call'},
-          DlcOptionType.call,
-        ),
+        dlcInstrumentMatchesOptionType({
+          'instrument_id': 'X',
+          'type': 'call',
+        }, DlcOptionType.call),
         true,
       );
       expect(
-        dlcInstrumentMatchesOptionType(
-          {'instrument_id': 'X', 'type': 'call'},
-          DlcOptionType.put,
-        ),
+        dlcInstrumentMatchesOptionType({
+          'instrument_id': 'X',
+          'type': 'call',
+        }, DlcOptionType.put),
         false,
       );
       expect(
-        dlcInstrumentMatchesOptionType(
-          {'instrument_id': 'X', 'type': 'put'},
-          DlcOptionType.put,
-        ),
+        dlcInstrumentMatchesOptionType({
+          'instrument_id': 'X',
+          'type': 'put',
+        }, DlcOptionType.put),
         true,
       );
     });
 
     test('falls back to instrument_id suffix -C / -P', () {
       expect(
-        dlcInstrumentMatchesOptionType(
-          {'instrument_id': 'BTC-31DEC25-STRIKE-C'},
-          DlcOptionType.call,
-        ),
+        dlcInstrumentMatchesOptionType({
+          'instrument_id': 'BTC-31DEC25-STRIKE-C',
+        }, DlcOptionType.call),
         true,
       );
       expect(
-        dlcInstrumentMatchesOptionType(
-          {'instrument_id': 'BTC-31DEC25-STRIKE-P'},
-          DlcOptionType.put,
-        ),
+        dlcInstrumentMatchesOptionType({
+          'instrument_id': 'BTC-31DEC25-STRIKE-P',
+        }, DlcOptionType.put),
         true,
       );
     });
@@ -55,6 +53,29 @@ void main() {
         }),
         'BTC-A · oracle_1',
       );
+    });
+  });
+
+  group('dlcInstrumentMetadata', () {
+    test('parses underlying expiry strike and right from instrument id', () {
+      final metadata = dlcInstrumentMetadata({
+        'instrument_id': 'BTC-18MAR26-74100-C',
+      });
+
+      expect(metadata.underlying, 'BTC');
+      expect(metadata.expiryToken, '18MAR26');
+      expect(metadata.strike, '74100');
+      expect(metadata.right, DlcOptionType.call);
+    });
+
+    test('uses API type when right suffix is not enough', () {
+      final metadata = dlcInstrumentMetadata({
+        'instrument_id': 'BTC-18MAR26-STRIKE',
+        'type': 'put',
+      });
+
+      expect(metadata.strike, 'STRIKE');
+      expect(metadata.right, DlcOptionType.put);
     });
   });
 

@@ -19,6 +19,13 @@ class DlcState {
   final int? reservedBalanceSat;
   final List<Map<String, dynamic>> orderbookBids;
   final List<Map<String, dynamic>> orderbookAsks;
+  final List<DlcWalletOption> availableWallets;
+  final String? selectedRegistrationWalletOriginId;
+  final List<DlcExpiredWalletInfo> expiredWallets;
+  final List<DlcWalletAuth> registeredWalletAuths;
+  final Map<String, dynamic>? coordinatorReadiness;
+  final bool coordinatorReadinessFailed;
+  final String? coordinatorTradingHint;
 
   const DlcState({
     required this.loading,
@@ -39,6 +46,13 @@ class DlcState {
     required this.reservedBalanceSat,
     required this.orderbookBids,
     required this.orderbookAsks,
+    required this.availableWallets,
+    required this.selectedRegistrationWalletOriginId,
+    required this.expiredWallets,
+    required this.registeredWalletAuths,
+    required this.coordinatorReadiness,
+    required this.coordinatorReadinessFailed,
+    required this.coordinatorTradingHint,
   });
 
   factory DlcState.initial() => const DlcState(
@@ -50,7 +64,7 @@ class DlcState {
     selectedInstrumentId: null,
     optionType: DlcOptionType.call,
     side: DlcOrderSide.buy,
-    quantity: 0.01,
+    quantity: 10000,
     price: 0,
     infoMessage: null,
     errorMessage: null,
@@ -60,6 +74,13 @@ class DlcState {
     reservedBalanceSat: null,
     orderbookBids: [],
     orderbookAsks: [],
+    availableWallets: [],
+    selectedRegistrationWalletOriginId: null,
+    expiredWallets: [],
+    registeredWalletAuths: [],
+    coordinatorReadiness: null,
+    coordinatorReadinessFailed: false,
+    coordinatorTradingHint: null,
   );
 
   DlcState copyWith({
@@ -85,6 +106,16 @@ class DlcState {
     int? reservedBalanceSat,
     List<Map<String, dynamic>>? orderbookBids,
     List<Map<String, dynamic>>? orderbookAsks,
+    List<DlcWalletOption>? availableWallets,
+    String? selectedRegistrationWalletOriginId,
+    bool clearSelectedRegistrationWallet = false,
+    List<DlcExpiredWalletInfo>? expiredWallets,
+    List<DlcWalletAuth>? registeredWalletAuths,
+    Map<String, dynamic>? coordinatorReadiness,
+    bool clearCoordinatorReadiness = false,
+    bool? coordinatorReadinessFailed,
+    String? coordinatorTradingHint,
+    bool clearCoordinatorTradingHint = false,
   }) {
     return DlcState(
       loading: loading ?? this.loading,
@@ -107,6 +138,22 @@ class DlcState {
       reservedBalanceSat: reservedBalanceSat ?? this.reservedBalanceSat,
       orderbookBids: orderbookBids ?? this.orderbookBids,
       orderbookAsks: orderbookAsks ?? this.orderbookAsks,
+      availableWallets: availableWallets ?? this.availableWallets,
+      selectedRegistrationWalletOriginId: clearSelectedRegistrationWallet
+          ? null
+          : (selectedRegistrationWalletOriginId ??
+                this.selectedRegistrationWalletOriginId),
+      expiredWallets: expiredWallets ?? this.expiredWallets,
+      registeredWalletAuths:
+          registeredWalletAuths ?? this.registeredWalletAuths,
+      coordinatorReadiness: clearCoordinatorReadiness
+          ? null
+          : (coordinatorReadiness ?? this.coordinatorReadiness),
+      coordinatorReadinessFailed:
+          coordinatorReadinessFailed ?? this.coordinatorReadinessFailed,
+      coordinatorTradingHint: clearCoordinatorTradingHint
+          ? null
+          : (coordinatorTradingHint ?? this.coordinatorTradingHint),
     );
   }
 }

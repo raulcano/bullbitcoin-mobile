@@ -50,7 +50,10 @@ class Bull {
   static Future<void> initFlutterRustBridgeDependencies() async {
     final initTasks = [
       dotenv.load(isOptional: true),
-      LibLwk.init(),
+      // `lwk-dart` native payload may not be available for Linux desktop builds in
+      // this dev environment. Keep Linux startup functional by only initializing
+      // LWk on mobile platforms.
+      if (Platform.isAndroid || Platform.isIOS) LibLwk.init(),
       BoltzCore.init(),
       PConfig.initializeApp(),
       LibBbqr.init(),

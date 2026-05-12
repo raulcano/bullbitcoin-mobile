@@ -239,7 +239,13 @@ class CheckAllServiceStatusUsecase {
         ),
       );
 
-      final response = await dio.get('/auth/system-readiness');
+      final partner = ApiServiceConstants.dlcCoordinatorPartnerToken.trim();
+      final response = await dio.get(
+        '/auth/system-readiness',
+        options: Options(
+          headers: partner.isEmpty ? null : {'X-Partner-Token': partner},
+        ),
+      );
       final data = response.data;
       final isReady = data is Map<String, dynamic>
           ? (data['bitcoin_node'] is Map<String, dynamic>

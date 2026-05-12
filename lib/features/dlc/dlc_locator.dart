@@ -7,6 +7,8 @@ import 'package:bb_mobile/core/wallet/data/repositories/wallet_repository.dart';
 import 'package:bb_mobile/core/seed/data/repository/seed_repository.dart';
 import 'package:bb_mobile/features/dlc/data/dlc_api_datasource.dart';
 import 'package:bb_mobile/features/dlc/data/dlc_auth_storage.dart';
+import 'package:bb_mobile/features/dlc/data/dlc_idempotency_storage.dart';
+import 'package:bb_mobile/features/dlc/data/dlc_order_storage.dart';
 import 'package:bb_mobile/features/dlc/data/dlc_repository.dart';
 import 'package:bb_mobile/features/dlc/domain/dlc_local_signer.dart';
 import 'package:bb_mobile/features/dlc/presentation/dlc_cubit.dart';
@@ -15,8 +17,8 @@ import 'package:get_it/get_it.dart';
 
 class DlcLocator {
   static void setup(GetIt locator) {
-    locator.registerLazySingleton<Dio>(
-      () => Dio(
+    locator.registerLazySingleton<Dio>(() {
+      final dio = Dio(
         BaseOptions(
           baseUrl: ApiServiceConstants.dlcCoordinatorBaseUrl.trim().replaceAll(
             RegExp(r'/+$'),
@@ -29,9 +31,20 @@ class DlcLocator {
           // connection (known issue; logs "Invalid HTTP request received").
           persistentConnection: false,
         ),
-      ),
-      instanceName: 'dlcCoordinatorDio',
-    );
+      );
+      final partner = ApiServiceConstants.dlcCoordinatorPartnerToken.trim();
+      if (partner.isNotEmpty) {
+        dio.interceptors.add(
+          InterceptorsWrapper(
+            onRequest: (options, handler) {
+              options.headers['X-Partner-Token'] = partner;
+              handler.next(options);
+            },
+          ),
+        );
+      }
+      return dio;
+    }, instanceName: 'dlcCoordinatorDio');
 
     locator.registerLazySingleton<DlcApiDatasource>(
       () => DlcApiDatasource(
@@ -42,6 +55,22 @@ class DlcLocator {
 
     locator.registerLazySingleton<DlcAuthStorage>(
       () => DlcAuthStorage(
+        secureStorage: locator<KeyValueStorageDatasource<String>>(
+          instanceName: LocatorInstanceNameConstants.secureStorageDatasource,
+        ),
+      ),
+    );
+
+    locator.registerLazySingleton<DlcIdempotencyStorage>(
+      () => DlcIdempotencyStorage(
+        secureStorage: locator<KeyValueStorageDatasource<String>>(
+          instanceName: LocatorInstanceNameConstants.secureStorageDatasource,
+        ),
+      ),
+    );
+
+    locator.registerLazySingleton<DlcOrderStorage>(
+      () => DlcOrderStorage(
         secureStorage: locator<KeyValueStorageDatasource<String>>(
           instanceName: LocatorInstanceNameConstants.secureStorageDatasource,
         ),
@@ -60,6 +89,8 @@ class DlcLocator {
         settingsRepository: locator<SettingsRepository>(),
         datasource: locator<DlcApiDatasource>(),
         authStorage: locator<DlcAuthStorage>(),
+        idempotencyStorage: locator<DlcIdempotencyStorage>(),
+        orderStorage: locator<DlcOrderStorage>(),
         localSigner: locator<DlcLocalSigner>(),
       ),
     );

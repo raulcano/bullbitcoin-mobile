@@ -12,7 +12,7 @@ void main() {
       expect(state.auth, isNull);
       expect(state.optionType, DlcOptionType.call);
       expect(state.side, DlcOrderSide.buy);
-      expect(state.quantity, 0.01);
+      expect(state.quantity, 10000);
       expect(state.price, 0);
     });
 
