@@ -79,6 +79,22 @@ void main() {
     });
   });
 
+  group('dlcInstrumentIdWithStrike', () {
+    test('replaces STRIKE placeholder with normalized strike token', () {
+      expect(
+        dlcInstrumentIdWithStrike('BTC-18MAR26-STRIKE-C', 74100),
+        'BTC-18MAR26-74100-C',
+      );
+    });
+
+    test('leaves non-template instruments unchanged', () {
+      expect(
+        dlcInstrumentIdWithStrike('BTC-18MAR26-74100-P', 80000),
+        'BTC-18MAR26-74100-P',
+      );
+    });
+  });
+
   group('dlcInstrumentById', () {
     test('returns map when id matches', () {
       final list = <Map<String, dynamic>>[

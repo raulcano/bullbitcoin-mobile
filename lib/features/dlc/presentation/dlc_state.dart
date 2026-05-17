@@ -1,3 +1,4 @@
+import 'package:bb_mobile/core/utils/constants.dart';
 import 'package:bb_mobile/features/dlc/domain/dlc_models.dart';
 
 class DlcState {
@@ -10,7 +11,13 @@ class DlcState {
   final DlcOptionType optionType;
   final DlcOrderSide side;
   final double quantity;
+
+  /// Premium per contract in satoshis (whole bitcoin units × 1e8).
   final double price;
+  final double? strikePrice;
+  final double? btcUsdSpotPrice;
+  final List<double> suggestedStrikePrices;
+  final String? strikePriceError;
   final String? infoMessage;
   final String? errorMessage;
   final int selectedTabIndex;
@@ -38,6 +45,10 @@ class DlcState {
     required this.side,
     required this.quantity,
     required this.price,
+    required this.strikePrice,
+    required this.btcUsdSpotPrice,
+    required this.suggestedStrikePrices,
+    required this.strikePriceError,
     required this.infoMessage,
     required this.errorMessage,
     required this.selectedTabIndex,
@@ -55,7 +66,7 @@ class DlcState {
     required this.coordinatorTradingHint,
   });
 
-  factory DlcState.initial() => const DlcState(
+  factory DlcState.initial() => DlcState(
     loading: false,
     processingOrder: false,
     auth: null,
@@ -64,8 +75,12 @@ class DlcState {
     selectedInstrumentId: null,
     optionType: DlcOptionType.call,
     side: DlcOrderSide.buy,
-    quantity: 10000,
-    price: 0,
+    quantity: 0.01,
+    price: ApiServiceConstants.dlcDefaultPremiumPerContractSatoshis.toDouble(),
+    strikePrice: null,
+    btcUsdSpotPrice: null,
+    suggestedStrikePrices: [],
+    strikePriceError: null,
     infoMessage: null,
     errorMessage: null,
     selectedTabIndex: 0,
@@ -96,6 +111,13 @@ class DlcState {
     DlcOrderSide? side,
     double? quantity,
     double? price,
+    double? strikePrice,
+    bool clearStrikePrice = false,
+    double? btcUsdSpotPrice,
+    bool clearBtcUsdSpotPrice = false,
+    List<double>? suggestedStrikePrices,
+    String? strikePriceError,
+    bool clearStrikePriceError = false,
     String? infoMessage,
     bool clearInfo = false,
     String? errorMessage,
@@ -130,6 +152,15 @@ class DlcState {
       side: side ?? this.side,
       quantity: quantity ?? this.quantity,
       price: price ?? this.price,
+      strikePrice: clearStrikePrice ? null : (strikePrice ?? this.strikePrice),
+      btcUsdSpotPrice: clearBtcUsdSpotPrice
+          ? null
+          : (btcUsdSpotPrice ?? this.btcUsdSpotPrice),
+      suggestedStrikePrices:
+          suggestedStrikePrices ?? this.suggestedStrikePrices,
+      strikePriceError: clearStrikePriceError
+          ? null
+          : (strikePriceError ?? this.strikePriceError),
       infoMessage: clearInfo ? null : (infoMessage ?? this.infoMessage),
       errorMessage: clearError ? null : (errorMessage ?? this.errorMessage),
       selectedTabIndex: selectedTabIndex ?? this.selectedTabIndex,

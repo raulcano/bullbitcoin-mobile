@@ -13,6 +13,7 @@ import 'package:bb_mobile/core/seed/seed_locator.dart';
 import 'package:bb_mobile/core/settings/settings_locator.dart';
 import 'package:bb_mobile/core/storage/sqlite_database.dart';
 import 'package:bb_mobile/core/storage/storage_locator.dart';
+import 'package:bb_mobile/core/dlc/dlc_locator.dart';
 import 'package:bb_mobile/core/swaps/swaps_locator.dart';
 import 'package:bb_mobile/core/tor/tor_locator.dart';
 import 'package:bb_mobile/core/wallet/wallet_locator.dart';
@@ -65,6 +66,7 @@ class CoreLocator {
     await RecoverbullLocator.registerRepositories(locator);
     SwapsLocator.registerRepositories(locator);
     WalletLocator.registerRepositories(locator);
+    DlcLocator.registerRepositories(locator);
     Bip85DerivationsLocator.registerRepositories(locator);
     LedgerLocator.registerRepositories(locator);
     BitBoxCoreLocator.registerRepositories(locator);
@@ -92,6 +94,7 @@ class CoreLocator {
     SwapsLocator.registerUsecases(locator);
     TorLocator.registerUsecases(locator);
     WalletLocator.registerUsecases(locator);
+    DlcLocator.registerUsecases(locator);
     Bip85DerivationsLocator.registerUsecases(locator);
     LedgerLocator.registerUsecases(locator);
     BitBoxCoreLocator.registerUsecases(locator);

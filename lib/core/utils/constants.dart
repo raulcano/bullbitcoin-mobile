@@ -103,26 +103,64 @@ class ApiServiceConstants {
       dotenv.env['BB_API_URL'] ?? 'https://api.bullbitcoin.com';
   static String bbApiTestUrl =
       dotenv.env['BB_API_TEST_URL'] ?? 'https://api05.bullbitcoin.dev';
-  static String dlcCoordinatorBaseUrl =
-      dotenv.env['DLC_COORDINATOR_URL'] ?? 'http://localhost:8000';
-  static String dlcCoordinatorBackupBaseUrl =
-      dotenv.env['DLC_COORDINATOR_BACKUP_URL'] ?? '';
-  static String dlcCoordinatorTestBaseUrl =
-      dotenv.env['DLC_COORDINATOR_TEST_URL'] ??
-      dotenv.env['DLC_COORDINATOR_URL'] ??
-      'http://localhost:8000';
-  static String dlcCoordinatorTestBackupBaseUrl =
-      dotenv.env['DLC_COORDINATOR_TEST_BACKUP_URL'] ??
-      dotenv.env['DLC_COORDINATOR_BACKUP_URL'] ??
-      '';
+  static String dlcCoordinatorBaseUrl = _envOr(
+    'DLC_COORDINATOR_URL',
+    'http://localhost:8000',
+  );
+  static String dlcCoordinatorBackupBaseUrl = _envOr(
+    'DLC_COORDINATOR_BACKUP_URL',
+    '',
+  );
+  static String dlcCoordinatorTestBaseUrl = _envOr(
+    'DLC_COORDINATOR_TEST_URL',
+    _envOr('DLC_COORDINATOR_URL', 'http://localhost:8000'),
+  );
+  static String dlcCoordinatorTestBackupBaseUrl = _envOr(
+    'DLC_COORDINATOR_TEST_BACKUP_URL',
+    _envOr('DLC_COORDINATOR_BACKUP_URL', ''),
+  );
 
   /// Bull Bitcoin partner integration token for coordinator order/DLC routes.
   /// Not user-editable; set via build env / `.env` for supported deployments.
-  static String dlcCoordinatorPartnerToken =
-      dotenv.env['DLC_COORDINATOR_PARTNER_TOKEN'] ?? '';
+  static String dlcCoordinatorPartnerId = _envOr(
+    'DLC_COORDINATOR_PARTNER_ID',
+    '',
+  );
+  static String dlcCoordinatorPartnerToken = _envOr(
+    'DLC_COORDINATOR_PARTNER_TOKEN',
+    '',
+  );
+  static String dlcBtcUsdTickerUrl = _envOr(
+    'DLC_BTC_USD_TICKER_URL',
+    'https://api.coinbase.com/v2/prices/BTC-USD/spot',
+  );
+
+  /// Default option premium per contract in the Create order UI (satoshis).
+  /// Override with `DLC_DEFAULT_PREMIUM_SATOSHIS_PER_CONTRACT` in `.env`.
+  static int get dlcDefaultPremiumPerContractSatoshis {
+    String? raw;
+    try {
+      raw = dotenv.env['DLC_DEFAULT_PREMIUM_SATOSHIS_PER_CONTRACT'];
+    } catch (_) {
+      raw = null;
+    }
+    const fallback = '5030000';
+    raw ??= fallback;
+    final parsed = int.tryParse(raw.trim());
+    if (parsed == null || parsed < 0) return int.parse(fallback);
+    return parsed;
+  }
 
   static bool get dlcCoordinatorPartnerTokenConfigured =>
       dlcCoordinatorPartnerToken.trim().isNotEmpty;
+
+  static String _envOr(String key, String fallback) {
+    try {
+      return dotenv.env[key] ?? fallback;
+    } catch (_) {
+      return fallback;
+    }
+  }
 
   /// Normalized base URL for DLC coordinator (no trailing slash), for the
   /// current app environment.

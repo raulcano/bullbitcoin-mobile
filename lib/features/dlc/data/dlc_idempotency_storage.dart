@@ -43,27 +43,43 @@ class DlcIdempotencyStorage {
     required Environment environment,
     required String orderId,
   }) async {
+    return getOrCreateAcceptKeyForFingerprint(
+      environment: environment,
+      orderId: orderId,
+      contextFingerprint: '',
+    );
+  }
+
+  Future<String> getOrCreateAcceptKeyForFingerprint({
+    required Environment environment,
+    required String orderId,
+    required String contextFingerprint,
+  }) async {
     final store = await _load(environment);
-    store.acceptByOrder.putIfAbsent(orderId, () => _newKey());
+    final key = _acceptStorageKey(orderId, contextFingerprint);
+    store.acceptByOrder.putIfAbsent(key, () => _newKey('accept'));
     await _save(environment, store);
-    return store.acceptByOrder[orderId]!;
+    return store.acceptByOrder[key]!;
   }
 
   Future<void> rotateAcceptKey({
     required Environment environment,
     required String orderId,
+    String contextFingerprint = '',
   }) async {
     final store = await _load(environment);
-    store.acceptByOrder[orderId] = _newKey();
+    final key = _acceptStorageKey(orderId, contextFingerprint);
+    store.acceptByOrder[key] = _newKey('accept');
     await _save(environment, store);
   }
 
   Future<void> clearAcceptKey({
     required Environment environment,
     required String orderId,
+    String contextFingerprint = '',
   }) async {
     final store = await _load(environment);
-    store.acceptByOrder.remove(orderId);
+    store.acceptByOrder.remove(_acceptStorageKey(orderId, contextFingerprint));
     await _save(environment, store);
   }
 
@@ -71,33 +87,60 @@ class DlcIdempotencyStorage {
     required Environment environment,
     required String dlcId,
   }) async {
+    return getOrCreateSignKeyForFingerprint(
+      environment: environment,
+      dlcId: dlcId,
+      contextFingerprint: '',
+    );
+  }
+
+  Future<String> getOrCreateSignKeyForFingerprint({
+    required Environment environment,
+    required String dlcId,
+    required String contextFingerprint,
+  }) async {
     final store = await _load(environment);
-    store.signByDlc.putIfAbsent(dlcId, () => _newKey());
+    final key = _signStorageKey(dlcId, contextFingerprint);
+    store.signByDlc.putIfAbsent(key, () => _newKey('sign'));
     await _save(environment, store);
-    return store.signByDlc[dlcId]!;
+    return store.signByDlc[key]!;
   }
 
   Future<void> rotateSignKey({
     required Environment environment,
     required String dlcId,
+    String contextFingerprint = '',
   }) async {
     final store = await _load(environment);
-    store.signByDlc[dlcId] = _newKey();
+    final key = _signStorageKey(dlcId, contextFingerprint);
+    store.signByDlc[key] = _newKey('sign');
     await _save(environment, store);
   }
 
   Future<void> clearSignKey({
     required Environment environment,
     required String dlcId,
+    String contextFingerprint = '',
   }) async {
     final store = await _load(environment);
-    store.signByDlc.remove(dlcId);
+    store.signByDlc.remove(_signStorageKey(dlcId, contextFingerprint));
     await _save(environment, store);
   }
 
-  String _newKey() {
-    final bytes = List<int>.generate(24, (_) => Random.secure().nextInt(256));
-    return hex.encode(bytes);
+  String _acceptStorageKey(String orderId, String contextFingerprint) {
+    final fp = contextFingerprint.trim();
+    return fp.isEmpty ? orderId : '$orderId:$fp';
+  }
+
+  String _signStorageKey(String dlcId, String contextFingerprint) {
+    final fp = contextFingerprint.trim();
+    return fp.isEmpty ? dlcId : '$dlcId:$fp';
+  }
+
+  String _newKey([String prefix = '']) {
+    final bytes = List<int>.generate(16, (_) => Random.secure().nextInt(256));
+    final token = hex.encode(bytes);
+    return prefix.isEmpty ? token : '$prefix-$token';
   }
 
   Future<_IdempotencyPayload> _load(Environment environment) async {

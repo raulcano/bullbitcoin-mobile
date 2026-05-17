@@ -12,8 +12,11 @@ void main() {
       expect(state.auth, isNull);
       expect(state.optionType, DlcOptionType.call);
       expect(state.side, DlcOrderSide.buy);
-      expect(state.quantity, 10000);
-      expect(state.price, 0);
+      expect(state.quantity, 0.01);
+      expect(state.price, 5030000);
+      expect(state.strikePrice, isNull);
+      expect(state.btcUsdSpotPrice, isNull);
+      expect(state.suggestedStrikePrices, isEmpty);
     });
 
     test('copyWith can clear info and error messages', () {

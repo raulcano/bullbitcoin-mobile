@@ -67,6 +67,16 @@ class DlcOrderStorage {
     return store[_key(walletOriginId, orderId)];
   }
 
+  Future<void> removeOrder({
+    required Environment environment,
+    required String walletOriginId,
+    required String orderId,
+  }) async {
+    final store = await _load(environment);
+    store.remove(_key(walletOriginId, orderId));
+    await _save(environment, store);
+  }
+
   Future<List<Map<String, dynamic>>> listForWallet({
     required Environment environment,
     required String walletOriginId,

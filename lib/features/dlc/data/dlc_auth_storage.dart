@@ -16,11 +16,23 @@ class DlcAuthStorage {
   String _storageKey(Environment environment) =>
       environment.isTestnet ? _testnetKey : _mainnetKey;
 
-  Future<void> store(Environment environment, DlcWalletAuth auth) async {
+  Future<void> store(
+    Environment environment,
+    DlcWalletAuth auth, {
+    bool makeActive = true,
+  }) async {
     final all = await getAll(environment);
+    final decoded = await _decode(environment);
     all.removeWhere((item) => item.walletOriginId == auth.walletOriginId);
     all.add(auth);
-    await _saveAll(environment, all, activeWalletOriginId: auth.walletOriginId);
+    final activeWalletOriginId = makeActive
+        ? auth.walletOriginId
+        : decoded?.activeWalletOriginId;
+    await _saveAll(
+      environment,
+      all,
+      activeWalletOriginId: activeWalletOriginId,
+    );
   }
 
   Future<DlcWalletAuth?> get(Environment environment) async {
@@ -44,7 +56,7 @@ class DlcAuthStorage {
       return (map['entries'] as List<dynamic>)
           .whereType<Map<String, dynamic>>()
           .map(_fromMap)
-          .toList(growable: false);
+          .toList();
     }
     // Backward compatibility with old single-entry payload.
     if (map.containsKey('walletId') && map.containsKey('walletToken')) {

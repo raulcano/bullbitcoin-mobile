@@ -2,6 +2,26 @@ import 'package:bb_mobile/core/settings/domain/repositories/settings_repository.
 import 'package:bb_mobile/core/utils/constants.dart';
 import 'package:dio/dio.dart';
 
+class DlcApiException implements Exception {
+  final int? statusCode;
+  final String message;
+  final bool isTimeout;
+  final bool isConnectionError;
+
+  const DlcApiException({
+    required this.statusCode,
+    required this.message,
+    required this.isTimeout,
+    this.isConnectionError = false,
+  });
+
+  @override
+  String toString() {
+    final prefix = statusCode == null ? '' : 'HTTP $statusCode: ';
+    return '$prefix$message';
+  }
+}
+
 class DlcApiDatasource {
   final Dio _dio;
   final SettingsRepository _settingsRepository;
@@ -14,6 +34,11 @@ class DlcApiDatasource {
     _dio.interceptors.add(
       InterceptorsWrapper(
         onError: (exception, handler) async {
+          if (exception.requestOptions.extra['dlc_skip_backup'] == true) {
+            handler.next(exception);
+            return;
+          }
+
           if (!_shouldTryBackup(exception)) {
             handler.next(exception);
             return;
@@ -64,11 +89,73 @@ class DlcApiDatasource {
   }
 
   bool _shouldTryBackup(DioException exception) {
-    return exception.type == DioExceptionType.connectionTimeout ||
-        exception.type == DioExceptionType.sendTimeout ||
-        exception.type == DioExceptionType.receiveTimeout ||
+    return _isTimeout(exception) ||
         exception.type == DioExceptionType.connectionError ||
         exception.type == DioExceptionType.unknown;
+  }
+
+  bool _isTimeout(DioException exception) {
+    return exception.type == DioExceptionType.connectionTimeout ||
+        exception.type == DioExceptionType.sendTimeout ||
+        exception.type == DioExceptionType.receiveTimeout;
+  }
+
+  Future<double> getBtcUsdSpotPrice() async {
+    final url = ApiServiceConstants.dlcBtcUsdTickerUrl.trim();
+    if (url.isEmpty) {
+      throw Exception('DLC_BTC_USD_TICKER_URL is not configured.');
+    }
+    try {
+      final response = await Dio(
+        BaseOptions(
+          connectTimeout: const Duration(seconds: 6),
+          receiveTimeout: const Duration(seconds: 6),
+          sendTimeout: const Duration(seconds: 6),
+        ),
+      ).get<dynamic>(url);
+      return _readTickerPrice(response.data);
+    } on DioException catch (e) {
+      throw Exception(_readApiError(e));
+    }
+  }
+
+  double _readTickerPrice(dynamic data) {
+    double? readNum(dynamic value) {
+      if (value is num) return value.toDouble();
+      if (value is String) return double.tryParse(value.replaceAll(',', ''));
+      return null;
+    }
+
+    if (data is Map) {
+      final directKeys = ['price', 'amount', 'last', 'rate'];
+      for (final key in directKeys) {
+        final value = readNum(data[key]);
+        if (value != null) return value;
+      }
+
+      final nestedData = data['data'];
+      if (nestedData is Map) {
+        for (final key in directKeys) {
+          final value = readNum(nestedData[key]);
+          if (value != null) return value;
+        }
+      }
+
+      final bitcoin = data['bitcoin'];
+      if (bitcoin is Map) {
+        final value = readNum(bitcoin['usd']);
+        if (value != null) return value;
+      }
+
+      final usd = data['USD'];
+      if (usd is Map) {
+        for (final key in directKeys) {
+          final value = readNum(usd[key]);
+          if (value != null) return value;
+        }
+      }
+    }
+    throw Exception('Ticker response did not contain a BTC/USD price.');
   }
 
   Future<Map<String, dynamic>> createNonce() async {
@@ -132,6 +219,30 @@ class DlcApiDatasource {
     }
   }
 
+  Future<Map<String, dynamic>> simulateOptionPayout({
+    required String token,
+    required Map<String, dynamic> payload,
+  }) async {
+    await _ensureBaseUrl();
+    try {
+      final response = await _dio.post(
+        '/orders/option-payout-simulation',
+        data: payload,
+        options: Options(headers: {'Authorization': 'Bearer $token'}),
+      );
+      final data = response.data;
+      if (data is Map<String, dynamic>) return data;
+      if (data is Map) return Map<String, dynamic>.from(data);
+      return const {};
+    } on DioException catch (e) {
+      throw DlcApiException(
+        statusCode: e.response?.statusCode,
+        message: _readApiError(e),
+        isTimeout: _isTimeout(e),
+      );
+    }
+  }
+
   Future<Map<String, dynamic>> createOrder({
     required String token,
     required Map<String, dynamic> payload,
@@ -141,11 +252,22 @@ class DlcApiDatasource {
       final response = await _dio.post(
         '/orders',
         data: payload,
-        options: Options(headers: {'Authorization': 'Bearer $token'}),
+        options: Options(
+          headers: {'Authorization': 'Bearer $token'},
+          // Offer build + match can exceed the default 8s coordinator timeout.
+          receiveTimeout: const Duration(seconds: 90),
+          sendTimeout: const Duration(seconds: 30),
+          extra: const {'dlc_skip_backup': true},
+        ),
       );
       return (response.data as Map<String, dynamic>);
     } on DioException catch (e) {
-      throw Exception(_readApiError(e));
+      throw DlcApiException(
+        statusCode: e.response?.statusCode,
+        message: _readApiError(e),
+        isTimeout: _isTimeout(e),
+        isConnectionError: e.type == DioExceptionType.connectionError,
+      );
     }
   }
 
@@ -181,14 +303,21 @@ class DlcApiDatasource {
     }
   }
 
-  Future<Map<String, dynamic>> refreshWalletBalance({
+  /// Client-driven UTXO set update (normal balance path; not xpub scan).
+  Future<Map<String, dynamic>> syncWalletUtxos({
     required String token,
     required String walletId,
+    required List<Map<String, dynamic>> utxos,
+    String? nonce,
   }) async {
     await _ensureBaseUrl();
     try {
       final response = await _dio.post(
-        '/auth/wallet/$walletId/refresh-balance',
+        '/auth/wallet/$walletId/sync-utxos',
+        data: {
+          if (nonce != null && nonce.isNotEmpty) 'nonce': nonce,
+          'utxos': utxos,
+        },
         options: Options(headers: {'Authorization': 'Bearer $token'}),
       );
       final data = response.data;

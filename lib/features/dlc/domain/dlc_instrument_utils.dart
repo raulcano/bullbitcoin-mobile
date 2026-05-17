@@ -69,6 +69,24 @@ DlcInstrumentMetadata dlcInstrumentMetadata(Map<String, dynamic> instrument) {
   );
 }
 
+String dlcInstrumentIdWithStrike(String instrumentId, double? strikePrice) {
+  if (!instrumentId.contains('-STRIKE-') || strikePrice == null) {
+    return instrumentId;
+  }
+  return instrumentId.replaceFirst(
+    '-STRIKE-',
+    '-${dlcNormalizeStrikeToken(strikePrice)}-',
+  );
+}
+
+String dlcNormalizeStrikeToken(double strike) {
+  final rounded = strike.roundToDouble();
+  if ((strike - rounded).abs() < 1e-9) {
+    return rounded.toInt().toString();
+  }
+  return strike.toStringAsFixed(8).replaceFirst(RegExp(r'\.?0+$'), '');
+}
+
 /// Short label for dropdowns (API id + optional oracle label).
 String dlcInstrumentLabel(Map<String, dynamic> instrument) {
   final id = dlcInstrumentId(instrument) ?? '?';

@@ -10,6 +10,95 @@ extension DlcOrderSideX on DlcOrderSide {
   String get value => this == DlcOrderSide.buy ? 'buy' : 'sell';
 }
 
+class DlcWalletSyncResult {
+  final Map<String, dynamic> raw;
+
+  const DlcWalletSyncResult(this.raw);
+
+  factory DlcWalletSyncResult.fromJson(Map<String, dynamic> json) {
+    return DlcWalletSyncResult(Map<String, dynamic>.from(json));
+  }
+
+  int? get totalBalanceSat => (raw['total_balance'] as num?)?.toInt();
+
+  int? get availableBalanceSat => (raw['available_balance'] as num?)?.toInt();
+
+  int? get reservedBalanceSat => (raw['reserved_balance'] as num?)?.toInt();
+
+  String? get warning => raw['warning'] as String?;
+
+  String? get utxoSyncError => raw['utxo_sync_error'] as String?;
+
+  List<Map<String, dynamic>> get cancelledOrders =>
+      (raw['cancelled_orders'] as List<dynamic>? ?? const [])
+          .whereType<Map>()
+          .map((item) => Map<String, dynamic>.from(item))
+          .toList(growable: false);
+
+  List<Map<String, dynamic>> get rejectedUtxos =>
+      (raw['rejected_utxos'] as List<dynamic>? ?? const [])
+          .whereType<Map>()
+          .map((item) => Map<String, dynamic>.from(item))
+          .toList(growable: false);
+
+  bool get hasCancelledOrders => cancelledOrders.isNotEmpty;
+}
+
+class DlcCreateOrderResult {
+  final DlcOrderSummary order;
+  final DlcWalletSyncResult syncBefore;
+
+  const DlcCreateOrderResult({required this.order, required this.syncBefore});
+}
+
+class DlcCancelOrderResult {
+  final DlcOrderSummary? order;
+  final DlcWalletSyncResult? syncAfter;
+  final bool removedBecauseNotFoundOnCoordinator;
+
+  const DlcCancelOrderResult({
+    required this.order,
+    this.syncAfter,
+    this.removedBecauseNotFoundOnCoordinator = false,
+  });
+
+  const DlcCancelOrderResult.staleRemovedLocally()
+    : order = null,
+      syncAfter = null,
+      removedBecauseNotFoundOnCoordinator = true;
+}
+
+enum DlcNegotiationActionKind { takerAccept, makerSign }
+
+class DlcNegotiationAction {
+  final DlcNegotiationActionKind kind;
+  final String orderId;
+  final String? dlcId;
+
+  const DlcNegotiationAction({
+    required this.kind,
+    required this.orderId,
+    this.dlcId,
+  });
+}
+
+class DlcNegotiationPassResult {
+  final List<DlcNegotiationAction> actions;
+  final List<String> errors;
+  final List<DlcOrderSummary> orders;
+
+  const DlcNegotiationPassResult({
+    required this.actions,
+    required this.errors,
+    required this.orders,
+  });
+
+  factory DlcNegotiationPassResult.skipped() =>
+      const DlcNegotiationPassResult(actions: [], errors: [], orders: []);
+
+  bool get didWork => actions.isNotEmpty;
+}
+
 class DlcWalletAuth {
   final String walletOriginId;
   final String walletLabel;
@@ -32,7 +121,10 @@ class DlcOrderDraft {
   final String instrumentId;
   final DlcOrderSide side;
   final double quantity;
+
+  /// Premium per contract in satoshis (Create order form).
   final double price;
+  final double? strikePrice;
   final String fundingPubkeyHex;
 
   const DlcOrderDraft({
@@ -40,7 +132,18 @@ class DlcOrderDraft {
     required this.side,
     required this.quantity,
     required this.price,
+    required this.strikePrice,
     required this.fundingPubkeyHex,
+  });
+}
+
+class DlcFundingPubkey {
+  final String pubkeyHex;
+  final String derivationPath;
+
+  const DlcFundingPubkey({
+    required this.pubkeyHex,
+    required this.derivationPath,
   });
 }
 
@@ -61,6 +164,10 @@ class DlcOrderSummary {
   final String? side;
   final double? quantity;
   final double? price;
+  final DateTime? createdAt;
+  final double? sideCollateralSat;
+  final double? partnerFeeSat;
+  final double? networkFeeSat;
   final String? lastErrorReason;
   final String? lastErrorMessage;
   final String? oracleOutcomeValue;
@@ -85,6 +192,10 @@ class DlcOrderSummary {
     required this.side,
     required this.quantity,
     required this.price,
+    required this.createdAt,
+    required this.sideCollateralSat,
+    required this.partnerFeeSat,
+    required this.networkFeeSat,
     required this.lastErrorReason,
     required this.lastErrorMessage,
     required this.oracleOutcomeValue,

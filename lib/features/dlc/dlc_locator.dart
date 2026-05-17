@@ -4,10 +4,12 @@ import 'package:bb_mobile/core/settings/domain/repositories/settings_repository.
 import 'package:bb_mobile/core/storage/data/datasources/key_value_storage/key_value_storage_datasource.dart';
 import 'package:bb_mobile/core/utils/constants.dart';
 import 'package:bb_mobile/core/wallet/data/repositories/wallet_repository.dart';
+import 'package:bb_mobile/core/wallet/domain/usecases/get_wallet_utxos_usecase.dart';
 import 'package:bb_mobile/core/seed/data/repository/seed_repository.dart';
 import 'package:bb_mobile/features/dlc/data/dlc_api_datasource.dart';
 import 'package:bb_mobile/features/dlc/data/dlc_auth_storage.dart';
 import 'package:bb_mobile/features/dlc/data/dlc_idempotency_storage.dart';
+import 'package:bb_mobile/features/dlc/data/dlc_negotiation_storage.dart';
 import 'package:bb_mobile/features/dlc/data/dlc_order_storage.dart';
 import 'package:bb_mobile/features/dlc/data/dlc_repository.dart';
 import 'package:bb_mobile/features/dlc/domain/dlc_local_signer.dart';
@@ -77,6 +79,14 @@ class DlcLocator {
       ),
     );
 
+    locator.registerLazySingleton<DlcNegotiationStorage>(
+      () => DlcNegotiationStorage(
+        secureStorage: locator<KeyValueStorageDatasource<String>>(
+          instanceName: LocatorInstanceNameConstants.secureStorageDatasource,
+        ),
+      ),
+    );
+
     locator.registerLazySingleton<DlcLocalSigner>(
       () => DlcLocalSigner(
         walletRepository: locator<WalletRepository>(),
@@ -91,7 +101,9 @@ class DlcLocator {
         authStorage: locator<DlcAuthStorage>(),
         idempotencyStorage: locator<DlcIdempotencyStorage>(),
         orderStorage: locator<DlcOrderStorage>(),
+        negotiationStorage: locator<DlcNegotiationStorage>(),
         localSigner: locator<DlcLocalSigner>(),
+        getWalletUtxosUsecase: locator<GetWalletUtxosUsecase>(),
       ),
     );
 

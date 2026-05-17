@@ -3,19 +3,22 @@ import 'dart:typed_data';
 
 import 'package:bb_mobile/core/seed/data/repository/seed_repository.dart';
 import 'package:bb_mobile/core/settings/domain/settings_entity.dart';
+import 'package:bb_mobile/core/wallet/domain/entities/wallet_address.dart';
 import 'package:bb_mobile/core/utils/uint_8_list_x.dart';
 import 'package:bb_mobile/core/wallet/data/repositories/wallet_repository.dart';
 import 'package:bb_mobile/core/wallet/domain/entities/wallet.dart';
+import 'package:bb_mobile/core/wallet/domain/entities/wallet_utxo.dart';
+import 'package:bb_mobile/features/dlc/domain/dlc_cet_adaptor_signing.dart';
 import 'package:bb_mobile/features/dlc/domain/dlc_models.dart';
 import 'package:bip32_keys/bip32_keys.dart';
 import 'package:convert/convert.dart';
 import 'package:crypto/crypto.dart';
+import 'package:pointycastle/digests/ripemd160.dart';
 
-/// Minimal local signer that reuses wallet-local secrets and deterministic
-/// hashing to produce request signatures expected by the coordinator flow.
+/// Local signer for DLC coordinator accept/sign flows.
 ///
-/// Note: this is intentionally conservative and deterministic; coordinator-side
-/// cryptographic verification remains the final source of truth.
+/// CET adaptor signatures use the core ECDSA adaptor module (162-byte wire
+/// layout). Refund and funding inputs remain compact ECDSA over coordinator sighashes.
 class DlcLocalSigner {
   final WalletRepository _walletRepository;
   final SeedRepository _seedRepository;
@@ -41,10 +44,13 @@ class DlcLocalSigner {
   }
 
   Future<List<Wallet>> getBitcoinWallets(Environment environment) async {
-    return _walletRepository.getWallets(
+    final wallets = await _walletRepository.getWallets(
       environment: environment,
       onlyBitcoin: true,
     );
+    return wallets
+        .where((wallet) => wallet.isBitcoin && !wallet.isLiquid)
+        .toList(growable: false);
   }
 
   Future<Wallet> getBitcoinWalletByOriginId({
@@ -60,9 +66,21 @@ class DlcLocalSigner {
   }
 
   Future<String> deriveFundingPubkeyHex({required Wallet wallet}) async {
+    final funding = await deriveFundingPubkey(wallet: wallet);
+    return funding.pubkeyHex;
+  }
+
+  Future<DlcFundingPubkey> deriveFundingPubkey({required Wallet wallet}) async {
     final seed = await _seedRepository.get(wallet.masterFingerprint);
-    final key = _deriveDlcKey(seedBytes: seed.bytes, wallet: wallet);
-    return key.public.toHexString();
+    final derivationPath = fundingDerivationPath(wallet);
+    final key = _deriveDlcKey(
+      seedBytes: seed.bytes,
+      derivationPath: derivationPath,
+    );
+    return DlcFundingPubkey(
+      pubkeyHex: key.public.toHexString(),
+      derivationPath: derivationPath,
+    );
   }
 
   Future<String> signNonceProof({
@@ -87,7 +105,10 @@ class DlcLocalSigner {
       seedBytes: seed.bytes,
       wallet: wallet,
     );
-    final interactionKey = _deriveDlcKey(seedBytes: seed.bytes, wallet: wallet);
+    final interactionKey = _deriveDlcKey(
+      seedBytes: seed.bytes,
+      derivationPath: fundingDerivationPath(wallet),
+    );
     final nonceHex = utf8.encode(nonce).toHexString();
 
     Uint8List signDigest(Bip32Keys key, List<int> digest) =>
@@ -128,10 +149,52 @@ class DlcLocalSigner {
     required int vout,
   }) async {
     final seed = await _seedRepository.get(wallet.masterFingerprint);
-    final key = _deriveDlcKey(seedBytes: seed.bytes, wallet: wallet);
+    final key = _deriveDlcKey(
+      seedBytes: seed.bytes,
+      derivationPath: fundingDerivationPath(wallet),
+    );
     final hash = sha256.convert(utf8.encode('$txid:$vout')).bytes;
     final signature = key.sign(Uint8List.fromList(hash));
     return Uint8List.fromList(signature).toHexString();
+  }
+
+  Future<List<Map<String, dynamic>>> buildUtxoProofs({
+    required Wallet wallet,
+    required List<WalletUtxo> utxos,
+    required String nonce,
+  }) async {
+    final bitcoinUtxos = utxos
+        .whereType<BitcoinWalletUtxo>()
+        .where((utxo) => !utxo.isFrozen)
+        .toList(growable: false);
+    if (bitcoinUtxos.isEmpty) return const [];
+
+    final seed = await _seedRepository.get(wallet.masterFingerprint);
+    final root = Bip32Keys.fromSeed(seed.bytes);
+    final proofs = <Map<String, dynamic>>[];
+    final cache = <String, Bip32Keys>{};
+
+    for (final utxo in bitcoinUtxos) {
+      final key = _findKeyForUtxo(
+        root: root,
+        wallet: wallet,
+        utxo: utxo,
+        cache: cache,
+      );
+      if (key == null) continue;
+      final messageBytes = utf8.encode('${utxo.txId}${utxo.vout}$nonce');
+      final digest = sha256.convert(messageBytes).bytes;
+      final signature = Uint8List.fromList(
+        key.sign(Uint8List.fromList(digest)) as List<int>,
+      );
+      proofs.add({
+        'txid': utxo.txId,
+        'vout': utxo.vout,
+        'signature': _toDerHex(signature),
+        'public_key': key.public.toHexString(),
+      });
+    }
+    return proofs;
   }
 
   Future<DlcSigningResult> signDlcContext({
@@ -141,23 +204,26 @@ class DlcLocalSigner {
     required String fundingPubkeyHex,
   }) async {
     final seed = await _seedRepository.get(wallet.masterFingerprint);
-    final key = _deriveDlcKey(seedBytes: seed.bytes, wallet: wallet);
+    final key = _deriveDlcKey(
+      seedBytes: seed.bytes,
+      derivationPath: fundingDerivationPath(wallet),
+    );
 
-    final jobs = (context['cet_signing_jobs'] as List<dynamic>? ?? const []);
-    // Coordinator expects serialized CET *adaptor* signatures (see OpenAPI, e.g. 162-byte payloads).
-    // Until a vetted adaptor implementation is wired here, we emit compact ECDSA hex over the
-    // provided message hash so request ordering and binding can be tested end-to-end.
-    final cetSigs = jobs.map((job) {
-      final map = job as Map<String, dynamic>;
-      final messageHashHex = map['message_hash_hex'] as String?;
-      if (messageHashHex == null || messageHashHex.isEmpty) {
-        final fallback = sha256.convert(utf8.encode(jsonEncode(map))).bytes;
-        final signed = key.sign(Uint8List.fromList(fallback));
-        return Uint8List.fromList(signed).toHexString();
-      }
-      final signed = key.sign(Uint8List.fromList(hex.decode(messageHashHex)));
-      return Uint8List.fromList(signed).toHexString();
-    }).toList();
+    final jobs = context['cet_signing_jobs'] as List<dynamic>? ?? const [];
+    final expectedJobCount = context['cet_signing_job_count'] as int?;
+    if (expectedJobCount != null && expectedJobCount != jobs.length) {
+      throw Exception(
+        'Signing context job count mismatch: expected $expectedJobCount, got ${jobs.length}',
+      );
+    }
+    final fundingPrivateKey = key.private;
+    if (fundingPrivateKey == null || fundingPrivateKey.length != 32) {
+      throw Exception('DLC funding key is missing or invalid.');
+    }
+    final cetSigs = signCetAdaptorJobsFromCoordinatorContext(
+      cetSigningJobs: jobs,
+      fundingPrivateKey: Uint8List.fromList(fundingPrivateKey),
+    );
 
     final refundSighashHex = context['refund_sighash_hex'] as String?;
     final refundHash = refundSighashHex == null || refundSighashHex.isEmpty
@@ -193,13 +259,70 @@ class DlcLocalSigner {
     );
   }
 
+  String fundingDerivationPath(Wallet wallet) => '${wallet.derivationPath}/0/0';
+
+  Bip32Keys? _findKeyForUtxo({
+    required Bip32Keys root,
+    required Wallet wallet,
+    required BitcoinWalletUtxo utxo,
+    required Map<String, Bip32Keys> cache,
+  }) {
+    final chain = utxo.addressKeyChain == WalletAddressKeyChain.internal
+        ? 1
+        : 0;
+    for (var index = 0; index < 1000; index++) {
+      final path = '${wallet.derivationPath}/$chain/$index';
+      final key = cache.putIfAbsent(path, () => root.derivePath(path));
+      if (_bytesEqual(
+        _scriptPubkeyForWalletKey(wallet, key),
+        utxo.scriptPubkey,
+      )) {
+        return key;
+      }
+    }
+    return null;
+  }
+
+  Uint8List _scriptPubkeyForWalletKey(Wallet wallet, Bip32Keys key) {
+    final pubkeyHash = _hash160(key.public);
+    switch (wallet.scriptType) {
+      case ScriptType.bip84:
+        return Uint8List.fromList([0x00, 0x14, ...pubkeyHash]);
+      case ScriptType.bip49:
+        final redeemScript = [0x00, 0x14, ...pubkeyHash];
+        final scriptHash = _hash160(redeemScript);
+        return Uint8List.fromList([0xa9, 0x14, ...scriptHash, 0x87]);
+      case ScriptType.bip44:
+        return Uint8List.fromList([
+          0x76,
+          0xa9,
+          0x14,
+          ...pubkeyHash,
+          0x88,
+          0xac,
+        ]);
+    }
+  }
+
+  Uint8List _hash160(List<int> bytes) {
+    final sha = sha256.convert(bytes).bytes;
+    return RIPEMD160Digest().process(Uint8List.fromList(sha));
+  }
+
+  bool _bytesEqual(List<int> a, List<int> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
+  }
+
   Bip32Keys _deriveDlcKey({
     required Uint8List seedBytes,
-    required Wallet wallet,
+    required String derivationPath,
   }) {
     final root = Bip32Keys.fromSeed(seedBytes);
-    // Use the first external key for deterministic coordinator interactions.
-    return root.derivePath('${wallet.derivationPath}/0/0');
+    return root.derivePath(derivationPath);
   }
 
   Bip32Keys _deriveWalletAccountKey({

@@ -13,7 +13,7 @@ This note documents what was tried on this machine so another agent can reproduc
 - Snap Flutter observed:
   `Flutter 3.41.7`, Dart `3.11.5`
 - Successful non-Snap Flutter SDK:
-  `/tmp/flutter-3.38.5/bin/flutter`
+  `/home/raul/development/flutter-3.38.5/bin/flutter`
 - Successful Flutter observed:
   `Flutter 3.38.5`, Dart `3.10.4`
 - Android SDK:
@@ -221,8 +221,8 @@ The error still referenced `/snap/flutter/current/usr/bin/ld`.
 The working fix was to use a non-Snap Flutter SDK at the version requested by `.fvmrc`:
 
 ```bash
-git clone --depth 1 --branch 3.38.5 https://github.com/flutter/flutter.git /tmp/flutter-3.38.5
-/tmp/flutter-3.38.5/bin/flutter --version
+git clone --depth 1 --branch 3.38.5 https://github.com/flutter/flutter.git /home/raul/development/flutter-3.38.5
+/home/raul/development/flutter-3.38.5/bin/flutter --version
 ```
 
 Expected version output:
@@ -247,7 +247,7 @@ env \
   ANDROID_SDK_ROOT=/home/raul/Android/Sdk \
   JAVA_HOME=/home/raul/.local/toolchains/jdk-21.0.10+7 \
   PATH=/tmp/codex-home/.cargo/bin:/home/raul/.local/toolchains/jdk-21.0.10+7/bin:/home/raul/.local/bin:/home/raul/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
-  /tmp/flutter-3.38.5/bin/flutter run -d emulator-5554
+  /home/raul/development/flutter-3.38.5/bin/flutter run -d emulator-5554
 ```
 
 On this machine the first successful debug build took about 41 minutes because it compiled many native Rust libraries for the emulator. It produced:
@@ -302,7 +302,7 @@ In a second terminal, wait for the emulator and confirm Flutter sees it:
 cd /home/raul/Code/bullbitcoin-mobile
 /home/raul/Android/Sdk/platform-tools/adb wait-for-device
 /home/raul/Android/Sdk/platform-tools/adb devices
-/tmp/flutter-3.38.5/bin/flutter devices
+/home/raul/development/flutter-3.38.5/bin/flutter devices
 ```
 
 If you want Flutter to build, install, start, and attach logs/hot reload, run:
@@ -318,7 +318,7 @@ env \
   ANDROID_SDK_ROOT=/home/raul/Android/Sdk \
   JAVA_HOME=/home/raul/.local/toolchains/jdk-21.0.10+7 \
   PATH=/tmp/codex-home/.cargo/bin:/home/raul/.local/toolchains/jdk-21.0.10+7/bin:/home/raul/.local/bin:/home/raul/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
-  /tmp/flutter-3.38.5/bin/flutter run -d emulator-5554
+  /home/raul/development/flutter-3.38.5/bin/flutter run -d emulator-5554
 ```
 
 If the APK is already installed on the emulator and you only want to start the Bull Bitcoin app from a terminal, run:
@@ -370,7 +370,7 @@ Confirm Flutter sees the phone:
 
 ```bash
 cd /home/raul/Code/bullbitcoin-mobile
-/tmp/flutter-3.38.5/bin/flutter devices
+/home/raul/development/flutter-3.38.5/bin/flutter devices
 ```
 
 Run the app on the phone. Replace `<PHONE_DEVICE_ID>` with the device ID shown by `adb devices` or `flutter devices`:
@@ -388,7 +388,7 @@ env \
   ANDROID_SDK_ROOT=/home/raul/Android/Sdk \
   JAVA_HOME=/home/raul/.local/toolchains/jdk-21.0.10+7 \
   PATH=/tmp/codex-home/.cargo/bin:/home/raul/.local/toolchains/jdk-21.0.10+7/bin:/home/raul/.local/bin:/home/raul/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
-  /tmp/flutter-3.38.5/bin/flutter run -d <PHONE_DEVICE_ID>
+  /home/raul/development/flutter-3.38.5/bin/flutter run -d <PHONE_DEVICE_ID>
 ```
 
 If the phone is the only connected Android device, this also works:
@@ -404,7 +404,7 @@ env \
   ANDROID_SDK_ROOT=/home/raul/Android/Sdk \
   JAVA_HOME=/home/raul/.local/toolchains/jdk-21.0.10+7 \
   PATH=/tmp/codex-home/.cargo/bin:/home/raul/.local/toolchains/jdk-21.0.10+7/bin:/home/raul/.local/bin:/home/raul/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
-  /tmp/flutter-3.38.5/bin/flutter run
+  /home/raul/development/flutter-3.38.5/bin/flutter run
 ```
 
 After Flutter installs the app once, you can start it again from the terminal without rebuilding:
