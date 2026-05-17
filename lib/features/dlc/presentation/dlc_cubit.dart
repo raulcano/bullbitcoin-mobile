@@ -135,7 +135,14 @@ class DlcCubit extends Cubit<DlcState> {
   }
 
   Future<void> registerWallet() async {
-    emit(state.copyWith(loading: true, clearError: true, clearInfo: true));
+    emit(
+      state.copyWith(
+        loading: true,
+        actionInProgress: true,
+        clearError: true,
+        clearInfo: true,
+      ),
+    );
     try {
       final walletOriginId = state.selectedRegistrationWalletOriginId;
       if (walletOriginId == null) {
@@ -147,6 +154,7 @@ class DlcCubit extends Cubit<DlcState> {
       emit(
         state.copyWith(
           loading: false,
+          actionInProgress: false,
           auth: auth,
           orders: orders,
           infoMessage: 'Wallet registered successfully.',
@@ -158,6 +166,7 @@ class DlcCubit extends Cubit<DlcState> {
       emit(
         state.copyWith(
           loading: false,
+          actionInProgress: false,
           errorMessage: 'Wallet registration failed: $e',
         ),
       );
@@ -185,13 +194,21 @@ class DlcCubit extends Cubit<DlcState> {
   }
 
   Future<void> switchActiveWallet(String walletOriginId) async {
-    emit(state.copyWith(loading: true, clearError: true, clearInfo: true));
+    emit(
+      state.copyWith(
+        loading: true,
+        actionInProgress: true,
+        clearError: true,
+        clearInfo: true,
+      ),
+    );
     try {
       await _repository.setActiveWalletOriginId(walletOriginId);
       await load();
       emit(
         state.copyWith(
           loading: false,
+          actionInProgress: false,
           infoMessage: 'Active DLC wallet switched.',
         ),
       );
@@ -199,6 +216,7 @@ class DlcCubit extends Cubit<DlcState> {
       emit(
         state.copyWith(
           loading: false,
+          actionInProgress: false,
           errorMessage: 'Failed to switch DLC wallet: $e',
         ),
       );
@@ -206,7 +224,14 @@ class DlcCubit extends Cubit<DlcState> {
   }
 
   Future<void> activateWalletForDlc(String walletOriginId) async {
-    emit(state.copyWith(loading: true, clearError: true, clearInfo: true));
+    emit(
+      state.copyWith(
+        loading: true,
+        actionInProgress: true,
+        clearError: true,
+        clearInfo: true,
+      ),
+    );
     try {
       final alreadyRegistered = state.registeredWalletAuths.any(
         (auth) => auth.walletOriginId == walletOriginId,
@@ -220,6 +245,7 @@ class DlcCubit extends Cubit<DlcState> {
       emit(
         state.copyWith(
           loading: false,
+          actionInProgress: false,
           infoMessage: alreadyRegistered
               ? 'Active DLC wallet switched.'
               : 'Wallet registered and activated for DLC.',
@@ -229,6 +255,7 @@ class DlcCubit extends Cubit<DlcState> {
       emit(
         state.copyWith(
           loading: false,
+          actionInProgress: false,
           errorMessage: 'Failed to activate DLC wallet: $e',
         ),
       );
@@ -266,7 +293,7 @@ class DlcCubit extends Cubit<DlcState> {
     }
   }
 
-  /// Refetches non-expired instruments from the coordinator and refreshes the orderbook.
+  /// Refetches instruments from the coordinator and refreshes the orderbook.
   Future<void> refreshInstruments() async {
     emit(state.copyWith(loading: true, clearError: true));
     try {
@@ -436,7 +463,14 @@ class DlcCubit extends Cubit<DlcState> {
   }
 
   Future<void> createOrder() async {
-    emit(state.copyWith(loading: true, clearError: true, clearInfo: true));
+    emit(
+      state.copyWith(
+        loading: true,
+        actionInProgress: true,
+        clearError: true,
+        clearInfo: true,
+      ),
+    );
     try {
       if (state.selectedInstrumentId == null) {
         throw Exception('Please select an instrument');
@@ -519,6 +553,7 @@ class DlcCubit extends Cubit<DlcState> {
       emit(
         state.copyWith(
           loading: false,
+          actionInProgress: false,
           orders: orders,
           totalBalanceSat: (balances?['total_balance'] as num?)?.toInt(),
           availableBalanceSat: (balances?['available_balance'] as num?)
@@ -561,6 +596,7 @@ class DlcCubit extends Cubit<DlcState> {
       emit(
         state.copyWith(
           loading: false,
+          actionInProgress: false,
           errorMessage: partner403
               ? 'Coordinator rejected the request (403). Check DLC_COORDINATOR_PARTNER_TOKEN and coordinator configuration.'
               : wallet401
@@ -817,18 +853,26 @@ class DlcCubit extends Cubit<DlcState> {
       if (isClosed) return;
 
       final negotiationInfo = _formatNegotiationInfo(result);
+      final fatalErrors = result.errors
+          .where((error) => !isBenignDlcNegotiationMessage(error))
+          .toList(growable: false);
+      final benignErrors = result.errors
+          .where(isBenignDlcNegotiationMessage)
+          .toList(growable: false);
       emit(
         state.copyWith(
           processingOrder: showProcessing ? false : state.processingOrder,
           orders: result.orders.isNotEmpty ? result.orders : state.orders,
           infoMessage: _combineInfoMessages([
             negotiationInfo,
+            if (benignErrors.isNotEmpty)
+              'Taker accept will continue in the background.',
             state.infoMessage,
           ]),
-          errorMessage: result.errors.isEmpty
+          errorMessage: fatalErrors.isEmpty
               ? state.errorMessage
               : _combineInfoMessages([
-                  result.errors.join(' '),
+                  fatalErrors.join(' '),
                   state.errorMessage,
                 ]),
         ),
@@ -838,10 +882,19 @@ class DlcCubit extends Cubit<DlcState> {
       );
     } catch (e) {
       if (!isClosed) {
+        final benign = isBenignDlcNegotiationMessage(e.toString());
         emit(
           state.copyWith(
             processingOrder: showProcessing ? false : state.processingOrder,
-            errorMessage: 'DLC negotiation failed: $e',
+            infoMessage: benign
+                ? _combineInfoMessages([
+                    'Taker accept will continue in the background.',
+                    state.infoMessage,
+                  ])
+                : state.infoMessage,
+            errorMessage: benign
+                ? state.errorMessage
+                : 'DLC negotiation failed: $e',
           ),
         );
       }

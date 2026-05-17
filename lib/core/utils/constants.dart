@@ -154,9 +154,33 @@ class ApiServiceConstants {
   static bool get dlcCoordinatorPartnerTokenConfigured =>
       dlcCoordinatorPartnerToken.trim().isNotEmpty;
 
+  /// When true, uses `GET /instruments` (all instruments, including expired)
+  /// for the orderbook and skips the pre-create "live instrument" check.
+  /// When false, uses `GET /instruments/non-expired` (live only). Dev-only;
+  /// must remain false in production.
+  static bool get dlcShowExpiredInstruments => _envBoolOr(
+    'DLC_SHOW_EXPIRED_INSTRUMENTS',
+    fallback: false,
+  );
+
+  /// Coordinator instruments list path for the DLC orderbook.
+  static String get dlcInstrumentsListPath => dlcShowExpiredInstruments
+      ? '/instruments'
+      : '/instruments/non-expired';
+
   static String _envOr(String key, String fallback) {
     try {
       return dotenv.env[key] ?? fallback;
+    } catch (_) {
+      return fallback;
+    }
+  }
+
+  static bool _envBoolOr(String key, {required bool fallback}) {
+    try {
+      final raw = dotenv.env[key]?.trim().toLowerCase();
+      if (raw == null || raw.isEmpty) return fallback;
+      return raw == 'true' || raw == '1' || raw == 'yes';
     } catch (_) {
       return fallback;
     }

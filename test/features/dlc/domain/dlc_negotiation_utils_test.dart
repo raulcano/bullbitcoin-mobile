@@ -49,6 +49,26 @@ void main() {
         isTrue,
       );
     });
+
+    test('false when coordinator status is filled even if flag is stale', () {
+      expect(
+        needsDlcTakerAccept(
+          _order(
+            status: 'filled',
+            pendingMatchAccept: true,
+            dlcId: 'dlc-1',
+          ),
+        ),
+        isFalse,
+      );
+    });
+
+    test('true when status is pending_accept', () {
+      expect(
+        needsDlcTakerAccept(_order(status: 'pending_accept')),
+        isTrue,
+      );
+    });
   });
 
   group('needsDlcMakerSign', () {
@@ -127,6 +147,94 @@ void main() {
 
     test('false for unrelated errors', () {
       expect(isCoordinatorOrderNotFound(Exception('HTTP 500: server error')), isFalse);
+    });
+  });
+
+  group('isCoordinatorDlcNotFound', () {
+    test('true for HTTP 404 DLC not found', () {
+      expect(
+        isCoordinatorDlcNotFound(Exception('HTTP 404: not_found: DLC not found')),
+        isTrue,
+      );
+    });
+
+    test('false for order not found', () {
+      expect(
+        isCoordinatorDlcNotFound(Exception('HTTP 404: Order not found')),
+        isFalse,
+      );
+    });
+  });
+
+  group('isCoordinatorResourceNotFound', () {
+    test('true for order or DLC 404', () {
+      expect(
+        isCoordinatorResourceNotFound(
+          Exception('HTTP 404: not_found: DLC not found'),
+        ),
+        isTrue,
+      );
+      expect(
+        isCoordinatorResourceNotFound(
+          Exception('HTTP 404: not_found: Order not found'),
+        ),
+        isTrue,
+      );
+    });
+  });
+
+  group('isAcceptSigningNoLongerRequired', () {
+    test('true for filled state conflict on accept-context', () {
+      expect(
+        isAcceptSigningNoLongerRequired(
+          Exception(
+            'HTTP 400: state_conflict: Order is not awaiting accept signing: filled',
+          ),
+        ),
+        isTrue,
+      );
+    });
+
+    test('false for unrelated validation errors', () {
+      expect(
+        isAcceptSigningNoLongerRequired(
+          Exception('HTTP 400: validation_failed'),
+        ),
+        isFalse,
+      );
+    });
+  });
+
+  group('isBenignDlcNegotiationMessage', () {
+    test('includes transient and accept state conflict', () {
+      expect(
+        isBenignDlcNegotiationMessage('No route to host'),
+        isTrue,
+      );
+      expect(
+        isBenignDlcNegotiationMessage(
+          'state_conflict: Order is not awaiting accept signing: filled',
+        ),
+        isTrue,
+      );
+    });
+  });
+
+  group('isTransientDlcCoordinatorMessage', () {
+    test('true for connection errors', () {
+      expect(
+        isTransientDlcCoordinatorMessage(
+          'The connection errored: No route to host',
+        ),
+        isTrue,
+      );
+    });
+
+    test('false for validation failures', () {
+      expect(
+        isTransientDlcCoordinatorMessage('HTTP 400: validation_failed'),
+        isFalse,
+      );
     });
   });
 

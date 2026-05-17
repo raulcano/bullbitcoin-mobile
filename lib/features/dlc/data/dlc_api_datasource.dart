@@ -60,6 +60,7 @@ class DlcApiDatasource {
             return;
           }
 
+          final originalBaseUrl = _dio.options.baseUrl;
           try {
             final retry = request.copyWith(
               baseUrl: backup,
@@ -69,8 +70,12 @@ class DlcApiDatasource {
             final response = await _dio.fetch<dynamic>(retry);
             handler.resolve(response);
           } on DioException catch (backupException) {
+            _dio.options.baseUrl = originalBaseUrl;
+            await _ensureBaseUrl();
             handler.next(backupException);
           } catch (_) {
+            _dio.options.baseUrl = originalBaseUrl;
+            await _ensureBaseUrl();
             handler.next(exception);
           }
         },
@@ -98,6 +103,30 @@ class DlcApiDatasource {
     return exception.type == DioExceptionType.connectionTimeout ||
         exception.type == DioExceptionType.sendTimeout ||
         exception.type == DioExceptionType.receiveTimeout;
+  }
+
+  /// Avoid failover to an unreachable backup host; accept/sign can be slow.
+  Options _coordinatorWriteOptions({
+    required String token,
+    bool skipBackup = true,
+    Duration receiveTimeout = const Duration(seconds: 90),
+    Duration sendTimeout = const Duration(seconds: 30),
+  }) {
+    return Options(
+      headers: {'Authorization': 'Bearer $token'},
+      receiveTimeout: receiveTimeout,
+      sendTimeout: sendTimeout,
+      extra: skipBackup ? const {'dlc_skip_backup': true} : null,
+    );
+  }
+
+  DlcApiException _toApiException(DioException e) {
+    return DlcApiException(
+      statusCode: e.response?.statusCode,
+      message: _readApiError(e),
+      isTimeout: _isTimeout(e),
+      isConnectionError: e.type == DioExceptionType.connectionError,
+    );
   }
 
   Future<double> getBtcUsdSpotPrice() async {
@@ -199,7 +228,7 @@ class DlcApiDatasource {
   Future<List<dynamic>> listInstruments() async {
     await _ensureBaseUrl();
     try {
-      final response = await _dio.get('/instruments/non-expired');
+      final response = await _dio.get(ApiServiceConstants.dlcInstrumentsListPath);
       return (response.data as List<dynamic>? ?? const []);
     } on DioException catch (e) {
       throw Exception(_readApiError(e));
@@ -318,7 +347,10 @@ class DlcApiDatasource {
           if (nonce != null && nonce.isNotEmpty) 'nonce': nonce,
           'utxos': utxos,
         },
-        options: Options(headers: {'Authorization': 'Bearer $token'}),
+        options: _coordinatorWriteOptions(
+          token: token,
+          receiveTimeout: const Duration(seconds: 60),
+        ),
       );
       final data = response.data;
       if (data is Map<String, dynamic>) return data;
@@ -397,11 +429,11 @@ class DlcApiDatasource {
       final response = await _dio.post(
         '/orders/$orderId/accept-context',
         data: {'funding_pubkey_hex': fundingPubkeyHex},
-        options: Options(headers: {'Authorization': 'Bearer $token'}),
+        options: _coordinatorWriteOptions(token: token),
       );
       return (response.data as Map<String, dynamic>);
     } on DioException catch (e) {
-      throw Exception(_readApiError(e));
+      throw _toApiException(e);
     }
   }
 
@@ -415,11 +447,11 @@ class DlcApiDatasource {
       final response = await _dio.post(
         '/orders/$orderId/accept-match',
         data: payload,
-        options: Options(headers: {'Authorization': 'Bearer $token'}),
+        options: _coordinatorWriteOptions(token: token),
       );
       return (response.data as Map<String, dynamic>);
     } on DioException catch (e) {
-      throw Exception(_readApiError(e));
+      throw _toApiException(e);
     }
   }
 
@@ -431,11 +463,11 @@ class DlcApiDatasource {
     try {
       final response = await _dio.get(
         '/dlcs/$dlcId/sign-context',
-        options: Options(headers: {'Authorization': 'Bearer $token'}),
+        options: _coordinatorWriteOptions(token: token),
       );
       return (response.data as Map<String, dynamic>);
     } on DioException catch (e) {
-      throw Exception(_readApiError(e));
+      throw _toApiException(e);
     }
   }
 
@@ -449,11 +481,11 @@ class DlcApiDatasource {
       final response = await _dio.post(
         '/dlcs/$dlcId/sign',
         data: payload,
-        options: Options(headers: {'Authorization': 'Bearer $token'}),
+        options: _coordinatorWriteOptions(token: token),
       );
       return (response.data as Map<String, dynamic>);
     } on DioException catch (e) {
-      throw Exception(_readApiError(e));
+      throw _toApiException(e);
     }
   }
 

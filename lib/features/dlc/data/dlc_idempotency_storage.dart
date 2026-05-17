@@ -127,6 +127,28 @@ class DlcIdempotencyStorage {
     await _save(environment, store);
   }
 
+  Future<void> clearAllKeysForOrder({
+    required Environment environment,
+    required String orderId,
+  }) async {
+    final store = await _load(environment);
+    store.acceptByOrder.removeWhere(
+      (key, _) => key == orderId || key.startsWith('$orderId:'),
+    );
+    await _save(environment, store);
+  }
+
+  Future<void> clearAllKeysForDlc({
+    required Environment environment,
+    required String dlcId,
+  }) async {
+    final store = await _load(environment);
+    store.signByDlc.removeWhere(
+      (key, _) => key == dlcId || key.startsWith('$dlcId:'),
+    );
+    await _save(environment, store);
+  }
+
   String _acceptStorageKey(String orderId, String contextFingerprint) {
     final fp = contextFingerprint.trim();
     return fp.isEmpty ? orderId : '$orderId:$fp';

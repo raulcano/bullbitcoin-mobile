@@ -54,6 +54,72 @@ void main() {
         'BTC-A · oracle_1',
       );
     });
+
+    test('marks expired instruments', () {
+      expect(
+        dlcInstrumentLabel({
+          'instrument_id': 'BTC-OLD-C',
+          'expires_at': '2000-01-01T00:00:00Z',
+        }),
+        'BTC-OLD-C (expired)',
+      );
+    });
+  });
+
+  group('isDlcInstrumentExpired', () {
+    test('is true when expires_at is in the past', () {
+      expect(
+        isDlcInstrumentExpired({
+          'instrument_id': 'BTC-OLD-C',
+          'expires_at': '2000-01-01T00:00:00Z',
+        }),
+        true,
+      );
+    });
+
+    test('is false when expires_at is in the future', () {
+      expect(
+        isDlcInstrumentExpired({
+          'instrument_id': 'BTC-NEW-C',
+          'expires_at': '2099-01-01T00:00:00Z',
+        }),
+        false,
+      );
+    });
+
+    test('is false when expires_at is missing', () {
+      expect(
+        isDlcInstrumentExpired({'instrument_id': 'BTC-X-C'}),
+        false,
+      );
+    });
+  });
+
+  group('dlcLiveInstruments / dlcExpiredInstruments', () {
+    final instruments = <Map<String, dynamic>>[
+      {
+        'instrument_id': 'LIVE',
+        'expires_at': '2099-01-01T00:00:00Z',
+      },
+      {
+        'instrument_id': 'OLD',
+        'expires_at': '2000-01-01T00:00:00Z',
+      },
+    ];
+
+    test('splits live and expired from GET /instruments payload', () {
+      expect(dlcLiveInstruments(instruments).map(dlcInstrumentId), ['LIVE']);
+      expect(dlcExpiredInstruments(instruments).map(dlcInstrumentId), ['OLD']);
+    });
+
+    test('sorts live before expired', () {
+      expect(
+        dlcSortInstrumentsLiveBeforeExpired(instruments)
+            .map(dlcInstrumentId)
+            .toList(),
+        ['LIVE', 'OLD'],
+      );
+    });
   });
 
   group('dlcInstrumentMetadata', () {

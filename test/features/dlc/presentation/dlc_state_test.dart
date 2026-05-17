@@ -8,6 +8,7 @@ void main() {
       final state = DlcState.initial();
 
       expect(state.loading, false);
+      expect(state.actionInProgress, false);
       expect(state.processingOrder, false);
       expect(state.auth, isNull);
       expect(state.optionType, DlcOptionType.call);

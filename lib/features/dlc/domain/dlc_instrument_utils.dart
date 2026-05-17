@@ -91,10 +91,14 @@ String dlcNormalizeStrikeToken(double strike) {
 String dlcInstrumentLabel(Map<String, dynamic> instrument) {
   final id = dlcInstrumentId(instrument) ?? '?';
   final oracle = instrument['oracle_label']?.toString().trim();
+  var label = id;
   if (oracle != null && oracle.isNotEmpty) {
-    return '$id · $oracle';
+    label = '$id · $oracle';
   }
-  return id;
+  if (isDlcInstrumentExpired(instrument)) {
+    return '$label (expired)';
+  }
+  return label;
 }
 
 /// Parsed expiry from coordinator [InstrumentResponse.expires_at] (ISO-8601).
@@ -102,6 +106,47 @@ DateTime? dlcInstrumentExpiresAt(Map<String, dynamic> instrument) {
   final raw = instrument['expires_at'];
   if (raw is String) return DateTime.tryParse(raw);
   return null;
+}
+
+/// True when [expires_at] is present and not after the current instant (UTC).
+bool isDlcInstrumentExpired(Map<String, dynamic> instrument) {
+  final expiresAt = dlcInstrumentExpiresAt(instrument);
+  if (expiresAt == null) return false;
+  return !expiresAt.toUtc().isAfter(DateTime.now().toUtc());
+}
+
+/// Live instruments from a `GET /instruments` payload (client-side filter).
+List<Map<String, dynamic>> dlcLiveInstruments(
+  Iterable<Map<String, dynamic>> instruments,
+) {
+  return instruments
+      .where((i) => !isDlcInstrumentExpired(i))
+      .toList(growable: false);
+}
+
+/// Expired instruments from a `GET /instruments` payload (client-side filter).
+List<Map<String, dynamic>> dlcExpiredInstruments(
+  Iterable<Map<String, dynamic>> instruments,
+) {
+  return instruments
+      .where(isDlcInstrumentExpired)
+      .toList(growable: false);
+}
+
+/// Puts non-expired instruments first, then expired (for orderbook pickers).
+List<Map<String, dynamic>> dlcSortInstrumentsLiveBeforeExpired(
+  Iterable<Map<String, dynamic>> instruments,
+) {
+  final live = <Map<String, dynamic>>[];
+  final expired = <Map<String, dynamic>>[];
+  for (final instrument in instruments) {
+    if (isDlcInstrumentExpired(instrument)) {
+      expired.add(instrument);
+    } else {
+      live.add(instrument);
+    }
+  }
+  return [...live, ...expired];
 }
 
 /// Find the instrument map for [instrumentId] in [instruments], or null.

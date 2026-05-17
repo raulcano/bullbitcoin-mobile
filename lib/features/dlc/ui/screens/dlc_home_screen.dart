@@ -10,9 +10,11 @@ import 'package:bb_mobile/features/dlc/presentation/dlc_state.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:bb_mobile/features/dlc/ui/widgets/dlc_action_loading_overlay.dart';
 import 'package:bb_mobile/features/dlc/ui/widgets/dlc_option_payout_chart.dart';
 import 'package:bb_mobile/locator.dart';
 import 'package:intl/intl.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 class DlcHomeScreen extends StatefulWidget {
   const DlcHomeScreen({super.key});
@@ -22,6 +24,7 @@ class DlcHomeScreen extends StatefulWidget {
 }
 
 class _DlcHomeScreenState extends State<DlcHomeScreen> {
+  bool _simulateLoading = false;
   final _quantityController = TextEditingController(text: '0.01');
   final _premiumController = TextEditingController(
     text: ApiServiceConstants.dlcDefaultPremiumPerContractSatoshis.toString(),
@@ -73,6 +76,26 @@ class _DlcHomeScreenState extends State<DlcHomeScreen> {
     );
   }
 
+  void _showOwnOrderbookOrdersInfo(BuildContext context) {
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Your orders on the book'),
+        content: Text(
+          'Rows that match your wallet’s open orders are shown with a dashed '
+          'underline so you can tell them apart from other participants.',
+          style: Theme.of(ctx).textTheme.bodyMedium,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   void initState() {
     super.initState();
@@ -112,13 +135,21 @@ class _DlcHomeScreenState extends State<DlcHomeScreen> {
             .toList(growable: false);
         final tradingBlocked = _tradingBlocked(state);
 
+        final showActionOverlay =
+            state.actionInProgress || state.processingOrder || _simulateLoading;
+
         return Scaffold(
-          body: SafeArea(
-            child: Column(
-              children: [
+          body: DlcActionLoadingOverlay(
+            visible: showActionOverlay,
+            child: SafeArea(
+              child: Column(
+                children: [
                 _DlcHomeTopNav(
                   selectedIndex: state.selectedTabIndex,
-                  loading: state.loading,
+                  loading:
+                      state.loading ||
+                      state.processingOrder ||
+                      _simulateLoading,
                   onSelect: (idx) {
                     context.read<DlcCubit>().setTab(idx);
                     if (idx == 1) {
@@ -126,11 +157,12 @@ class _DlcHomeScreenState extends State<DlcHomeScreen> {
                     }
                   },
                 ),
+                const _DlcColdPayAttribution(),
                 Expanded(
                   child: RefreshIndicator(
                     onRefresh: context.read<DlcCubit>().load,
                     child: ListView(
-                      padding: const EdgeInsets.all(16),
+                      padding: const EdgeInsets.fromLTRB(16, 6, 16, 16),
                       children: [
                         if (state.errorMessage != null) ...[
                           const SizedBox(height: 12),
@@ -207,6 +239,8 @@ class _DlcHomeScreenState extends State<DlcHomeScreen> {
                             selectedInstrument: selectedForOrderbook,
                             loading: state.loading,
                             onDepthRowTap: _applyDepthRowToCreateOrder,
+                            onOwnOrdersInfoTap: () =>
+                                _showOwnOrderbookOrdersInfo(context),
                           ),
                           if (filteredInstruments.isEmpty)
                             Padding(
@@ -303,10 +337,9 @@ class _DlcHomeScreenState extends State<DlcHomeScreen> {
                                         ),
                                     decoration: InputDecoration(
                                       labelText:
-                                          'Price per contract (option premium)',
+                                          'Premium per contract (option price)',
                                       helperText:
-                                          'Satoshis per contract (whole number). '
-                                          'Estimated total = satoshis × number of contracts.',
+                                          'Satoshis per contract (whole number).',
                                     ),
                                     onChanged: context
                                         .read<DlcCubit>()
@@ -352,7 +385,8 @@ class _DlcHomeScreenState extends State<DlcHomeScreen> {
                           const SizedBox(height: 12),
                           _OrderGroupSection(
                             title: 'Live orders',
-                            subtitle: 'Filled, settlement/attestation pending',
+                            subtitle:
+                                'Pending accept, filled, or settlement in progress',
                             orders: liveOrders,
                             processingOrder: state.processingOrder,
                           ),
@@ -362,10 +396,16 @@ class _DlcHomeScreenState extends State<DlcHomeScreen> {
                             subtitle: 'Completed DLCs and finalized orders',
                             orders: closedOrders,
                             processingOrder: state.processingOrder,
-                            allowFill: false,
+                            leadingIcon: Icons.task_alt_outlined,
                           ),
                         ] else ...[
-                          _SimulateTabPanel(state: state),
+                          _SimulateTabPanel(
+                            state: state,
+                            onLoadingChanged: (loading) {
+                              if (_simulateLoading == loading) return;
+                              setState(() => _simulateLoading = loading);
+                            },
+                          ),
                         ],
                       ],
                     ),
@@ -374,8 +414,63 @@ class _DlcHomeScreenState extends State<DlcHomeScreen> {
               ],
             ),
           ),
+          ),
         );
       },
+    );
+  }
+}
+
+/// Bitcoin brand orange for ColdPay attribution period.
+const _dlcBitcoinOrange = Color(0xFFF7931A);
+const _coldPayWebsite = 'https://www.coldpay.me';
+
+class _DlcColdPayAttribution extends StatelessWidget {
+  const _DlcColdPayAttribution();
+
+  Future<void> _openColdPayWebsite() async {
+    final uri = Uri.parse(_coldPayWebsite);
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final baseStyle = theme.textTheme.labelMedium?.copyWith(
+      color: theme.colorScheme.onSurfaceVariant,
+    );
+    final baseSize = baseStyle?.fontSize ?? 12;
+    final italicStyle = baseStyle?.copyWith(fontStyle: FontStyle.italic);
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
+      child: Align(
+        alignment: Alignment.centerRight,
+        child: InkWell(
+          onTap: _openColdPayWebsite,
+          borderRadius: BorderRadius.circular(4),
+          child: RichText(
+              textAlign: TextAlign.right,
+              text: TextSpan(
+                children: [
+                  TextSpan(text: 'Powered by ', style: italicStyle),
+                  TextSpan(text: 'ColdPay', style: baseStyle),
+                  TextSpan(
+                    text: '.',
+                    style: baseStyle?.copyWith(
+                      fontSize: baseSize * 2.6,
+                      color: _dlcBitcoinOrange,
+                      fontWeight: FontWeight.w600,
+                      height: 0.75,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+        ),
+      ),
     );
   }
 }
@@ -404,7 +499,7 @@ class _DlcHomeTopNav extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 6),
       child: DecoratedBox(
         decoration: BoxDecoration(
           color: scheme.surfaceContainerLow.withValues(alpha: 0.92),
@@ -523,9 +618,13 @@ class _DlcHomeNavItem extends StatelessWidget {
 }
 
 class _SimulateTabPanel extends StatefulWidget {
-  const _SimulateTabPanel({required this.state});
+  const _SimulateTabPanel({
+    required this.state,
+    required this.onLoadingChanged,
+  });
 
   final DlcState state;
+  final void Function(bool loading) onLoadingChanged;
 
   @override
   State<_SimulateTabPanel> createState() => _SimulateTabPanelState();
@@ -546,6 +645,7 @@ class _SimulateTabPanelState extends State<_SimulateTabPanel> {
   DlcOptionPayoutSimulationResult? _result;
   int _chartStrikeUsd = 0;
   int _chartOutcomeUsd = 0;
+  final _simulationResultsKey = GlobalKey();
 
   @override
   void initState() {
@@ -648,6 +748,7 @@ class _SimulateTabPanelState extends State<_SimulateTabPanel> {
       _loading = true;
       _error = null;
     });
+    widget.onLoadingChanged(true);
 
     final req = DlcOptionPayoutSimulationRequest(
       side: _role == DlcOrderSide.buy ? 'buy' : 'sell',
@@ -672,6 +773,8 @@ class _SimulateTabPanelState extends State<_SimulateTabPanel> {
         _chartStrikeUsd = strikeInt;
         _chartOutcomeUsd = outcome;
       });
+      widget.onLoadingChanged(false);
+      _scrollToSimulationResults();
     } on DlcApiException catch (e) {
       if (!mounted) return;
       setState(() {
@@ -679,6 +782,7 @@ class _SimulateTabPanelState extends State<_SimulateTabPanel> {
         _result = null;
         _error = e.message;
       });
+      widget.onLoadingChanged(false);
       messenger?.showSnackBar(SnackBar(content: Text(e.message)));
     } catch (e) {
       if (!mounted) return;
@@ -688,8 +792,23 @@ class _SimulateTabPanelState extends State<_SimulateTabPanel> {
         _result = null;
         _error = msg;
       });
+      widget.onLoadingChanged(false);
       messenger?.showSnackBar(SnackBar(content: Text(msg)));
     }
+  }
+
+  void _scrollToSimulationResults() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final target = _simulationResultsKey.currentContext;
+      if (target == null) return;
+      Scrollable.ensureVisible(
+        target,
+        alignment: 0.0,
+        duration: const Duration(milliseconds: 350),
+        curve: Curves.easeOutCubic,
+      );
+    });
   }
 
   void _showRoundingDeltaInfoDialog(BuildContext context) {
@@ -1012,17 +1131,8 @@ class _SimulateTabPanelState extends State<_SimulateTabPanel> {
                     onPressed: widget.state.auth == null || _loading
                         ? null
                         : _runSimulation,
-                    icon: _loading
-                        ? SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: theme.colorScheme.onPrimary,
-                            ),
-                          )
-                        : const Icon(Icons.play_arrow_outlined),
-                    label: Text(_loading ? 'RUNNING…' : 'SIMULATE'),
+                    icon: const Icon(Icons.play_arrow_outlined),
+                    label: const Text('SIMULATE'),
                   ),
                 ),
               ],
@@ -1032,46 +1142,7 @@ class _SimulateTabPanelState extends State<_SimulateTabPanel> {
         if (_result != null) ...[
           const SizedBox(height: 12),
           Card(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Icon(
-                        Icons.show_chart_outlined,
-                        size: 18,
-                        color: theme.colorScheme.primary,
-                      ),
-                      const SizedBox(width: 6),
-                      Text(
-                        'Payout curve',
-                        style: theme.textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    'Stepped rounded wallet payout (intervals), dashed canonical '
-                    '(canonical_points); strike and outcome_price guides; '
-                    'outcome_interval highlighted.',
-                    style: subtle,
-                  ),
-                  const SizedBox(height: 12),
-                  DlcOptionPayoutChart(
-                    result: _result!,
-                    strikeUsd: _chartStrikeUsd,
-                    outcomeUsd: _chartOutcomeUsd,
-                  ),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(height: 12),
-          Card(
+            key: _simulationResultsKey,
             child: Padding(
               padding: const EdgeInsets.all(16),
               child: Column(
@@ -1171,6 +1242,46 @@ class _SimulateTabPanelState extends State<_SimulateTabPanel> {
                     onLabelInfoTap: () =>
                         _showRoundingDeltaInfoDialog(context),
                     labelInfoTooltip: 'About rounding delta',
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(
+                        Icons.show_chart_outlined,
+                        size: 18,
+                        color: theme.colorScheme.primary,
+                      ),
+                      const SizedBox(width: 6),
+                      Text(
+                        'Payout curve',
+                        style: theme.textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Stepped rounded wallet payout (intervals), dashed canonical '
+                    '(canonical_points); strike and outcome_price guides; '
+                    'outcome_interval highlighted.',
+                    style: subtle,
+                  ),
+                  const SizedBox(height: 12),
+                  DlcOptionPayoutChart(
+                    result: _result!,
+                    strikeUsd: _chartStrikeUsd,
+                    outcomeUsd: _chartOutcomeUsd,
                   ),
                 ],
               ),
@@ -1683,7 +1794,7 @@ class _OrderGroupSection extends StatelessWidget {
     required this.subtitle,
     required this.orders,
     required this.processingOrder,
-    this.allowFill = true,
+    this.leadingIcon = Icons.pending_actions_outlined,
     this.showCancel = false,
   });
 
@@ -1691,7 +1802,7 @@ class _OrderGroupSection extends StatelessWidget {
   final String subtitle;
   final List<DlcOrderSummary> orders;
   final bool processingOrder;
-  final bool allowFill;
+  final IconData leadingIcon;
   final bool showCancel;
 
   @override
@@ -1705,9 +1816,7 @@ class _OrderGroupSection extends StatelessWidget {
             Row(
               children: [
                 Icon(
-                  allowFill
-                      ? Icons.pending_actions_outlined
-                      : Icons.task_alt_outlined,
+                  leadingIcon,
                   size: 18,
                   color: Theme.of(context).colorScheme.primary,
                 ),
@@ -1734,7 +1843,6 @@ class _OrderGroupSection extends StatelessWidget {
                   order: order,
                   processingOrder: processingOrder,
                   showCancel: showCancel,
-                  showContinue: allowFill,
                 ),
               ),
           ],
@@ -1749,13 +1857,11 @@ class _CompactOrderEntry extends StatelessWidget {
     required this.order,
     required this.processingOrder,
     required this.showCancel,
-    required this.showContinue,
   });
 
   final DlcOrderSummary order;
   final bool processingOrder;
   final bool showCancel;
-  final bool showContinue;
 
   @override
   Widget build(BuildContext context) {
@@ -1799,7 +1905,7 @@ class _CompactOrderEntry extends StatelessWidget {
                           : _formatDecimalInput(order.quantity!),
                     ),
                     _OrderMetric(
-                      label: 'Premium per contract',
+                      label: 'Premium in this contract',
                       value: dlcFormatOrderPremiumPerContract(order),
                     ),
                     _OrderMetric(
@@ -1847,17 +1953,6 @@ class _CompactOrderEntry extends StatelessWidget {
                           ? null
                           : () => _confirmCancelOrder(context, order),
                       icon: const Icon(Icons.close, size: 20),
-                    ),
-                  if (showContinue)
-                    IconButton(
-                      visualDensity: VisualDensity.compact,
-                      tooltip: 'Continue order flow',
-                      onPressed: processingOrder
-                          ? null
-                          : () => context
-                                .read<DlcCubit>()
-                                .processOrderLifecycle(order.orderId),
-                      icon: const Icon(Icons.play_arrow, size: 20),
                     ),
                 ],
               ),
@@ -1931,7 +2026,7 @@ void _showOrderInfoDialog(BuildContext context, DlcOrderSummary order) {
                   : _formatDecimalInput(order.quantity!),
             ),
             _InfoRow(
-              'Premium / contract (sat)',
+              'Premium in this contract (sats)',
               dlcFormatOrderPremiumPerContract(order),
             ),
             _InfoRow('Side', _formatOrderSide(order.side)),
@@ -2026,14 +2121,7 @@ String _formatOrderSide(String? side) {
 
 String _formatEstimatedPremiumSats(double totalSats) {
   if (totalSats.isNaN || totalSats.isInfinite || totalSats < 0) return '-';
-  final rounded = totalSats.round();
-  if ((totalSats - rounded).abs() < 1e-9) {
-    return '${rounded.toString()} satoshis';
-  }
-  final trimmed = totalSats
-      .toStringAsFixed(4)
-      .replaceFirst(RegExp(r'\.?0+$'), '');
-  return '$trimmed satoshis';
+  return '${dlcFormatGroupedSatoshis(totalSats.round())} satoshis';
 }
 
 String _orderbookQuantityLabel(Map<String, dynamic> row) {
@@ -2049,6 +2137,7 @@ class _OrderbookDepthTable extends StatelessWidget {
     required this.rows,
     required this.rowTextColor,
     this.onRowTap,
+    this.isOwnWalletRow,
   });
 
   final ThemeData theme;
@@ -2056,6 +2145,7 @@ class _OrderbookDepthTable extends StatelessWidget {
   final List<Map<String, dynamic>> rows;
   final Color rowTextColor;
   final void Function(Map<String, dynamic> row)? onRowTap;
+  final bool Function(Map<String, dynamic> row)? isOwnWalletRow;
 
   @override
   Widget build(BuildContext context) {
@@ -2067,10 +2157,20 @@ class _OrderbookDepthTable extends StatelessWidget {
       fontWeight: FontWeight.w600,
       color: colorScheme.onSurface,
     );
-    final cellStyle = theme.textTheme.bodyMedium?.copyWith(
+    final baseCellStyle = theme.textTheme.bodyMedium?.copyWith(
       color: rowTextColor,
       fontWeight: FontWeight.w500,
     );
+
+    TextStyle cellStyleFor(Map<String, dynamic> row) {
+      final isOwn = isOwnWalletRow?.call(row) ?? false;
+      if (!isOwn) return baseCellStyle!;
+      return baseCellStyle!.copyWith(
+        decoration: TextDecoration.underline,
+        decorationStyle: TextDecorationStyle.dashed,
+        decorationColor: rowTextColor,
+      );
+    }
 
     final tap = onRowTap;
 
@@ -2091,47 +2191,94 @@ class _OrderbookDepthTable extends StatelessWidget {
             ),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              child: Text('Quantity', style: headerStyle),
+              child: Text('Number of contracts', style: headerStyle),
             ),
           ],
         ),
         ...subset.map(
-          (row) => TableRow(
-            children: [
-              TableCell(
-                verticalAlignment: TableCellVerticalAlignment.middle,
-                child: InkWell(
-                  onTap: tap == null ? null : () => tap(row),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 6,
-                    ),
-                    child: Text(
-                      dlcFormatGroupedSatoshis(
-                        dlcOrderbookPremiumPerFullContractSatoshis(row),
+          (row) {
+            final rowStyle = cellStyleFor(row);
+            return TableRow(
+              children: [
+                TableCell(
+                  verticalAlignment: TableCellVerticalAlignment.middle,
+                  child: InkWell(
+                    onTap: tap == null ? null : () => tap(row),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 6,
                       ),
-                      style: cellStyle,
+                      child: Text(
+                        dlcFormatGroupedSatoshis(
+                          dlcOrderbookPremiumPerFullContractSatoshis(row),
+                        ),
+                        style: rowStyle,
+                      ),
                     ),
                   ),
                 ),
-              ),
-              TableCell(
-                verticalAlignment: TableCellVerticalAlignment.middle,
-                child: InkWell(
-                  onTap: tap == null ? null : () => tap(row),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 6,
+                TableCell(
+                  verticalAlignment: TableCellVerticalAlignment.middle,
+                  child: InkWell(
+                    onTap: tap == null ? null : () => tap(row),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 6,
+                      ),
+                      child: Text(
+                        _orderbookQuantityLabel(row),
+                        style: rowStyle,
+                      ),
                     ),
-                    child: Text(_orderbookQuantityLabel(row), style: cellStyle),
                   ),
                 ),
-              ),
-            ],
+              ],
+            );
+          },
+        ),
+      ],
+    );
+  }
+}
+
+class _OrderbookSideHeader extends StatelessWidget {
+  const _OrderbookSideHeader({
+    required this.label,
+    required this.color,
+    required this.onInfoTap,
+    this.showInfo = true,
+  });
+
+  final String label;
+  final Color color;
+  final VoidCallback onInfoTap;
+  final bool showInfo;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Row(
+      children: [
+        Text(
+          label,
+          style: theme.textTheme.titleSmall?.copyWith(
+            fontWeight: FontWeight.w700,
+            color: color,
           ),
         ),
+        if (showInfo) ...[
+          const SizedBox(width: 4),
+          IconButton(
+            visualDensity: VisualDensity.compact,
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+            tooltip: 'Your orders on the book',
+            icon: Icon(Icons.info_outline, size: 18, color: color),
+            onPressed: onInfoTap,
+          ),
+        ],
       ],
     );
   }
@@ -2145,6 +2292,7 @@ class _OrderbookInstrumentCard extends StatelessWidget {
     required this.selectedInstrument,
     required this.loading,
     required this.onDepthRowTap,
+    required this.onOwnOrdersInfoTap,
   });
 
   final DlcState state;
@@ -2155,6 +2303,7 @@ class _OrderbookInstrumentCard extends StatelessWidget {
     required Map<String, dynamic> row,
   })
   onDepthRowTap;
+  final VoidCallback onOwnOrdersInfoTap;
 
   Future<void> _openPickerOverlay(BuildContext context) async {
     final cubit = context.read<DlcCubit>();
@@ -2213,9 +2362,7 @@ class _OrderbookInstrumentCard extends StatelessWidget {
                         .map(
                           (i) => DropdownMenuItem(
                             value: dlcInstrumentId(i),
-                            child: Text(
-                              _instrumentDisplayId(dlcInstrumentId(i)),
-                            ),
+                            child: Text(dlcInstrumentLabel(i)),
                           ),
                         )
                         .toList(),
@@ -2450,8 +2597,8 @@ class _OrderbookInstrumentCard extends StatelessWidget {
                                 optionLabel ?? '-',
                                 ?(strikeLabel == null
                                     ? null
-                                    : 'Strike: $strikeLabel'),
-                                'Expiry: $expiryText',
+                                    : 'Strk.: $strikeLabel'),
+                                'Exp.: $expiryText',
                               ].join(' | '),
                               style: theme.textTheme.labelSmall?.copyWith(
                                 color: colorScheme.onSurfaceVariant,
@@ -2473,12 +2620,11 @@ class _OrderbookInstrumentCard extends StatelessWidget {
             ),
             const SizedBox(height: 20),
             if (id != null) ...[
-              Text(
-                'Asks',
-                style: theme.textTheme.titleSmall?.copyWith(
-                  fontWeight: FontWeight.w700,
-                  color: const Color(0xFFB71C1C),
-                ),
+              _OrderbookSideHeader(
+                label: 'Asks',
+                color: const Color(0xFFB71C1C),
+                showInfo: state.auth != null,
+                onInfoTap: onOwnOrdersInfoTap,
               ),
               const SizedBox(height: 6),
               _OrderbookDepthTable(
@@ -2489,14 +2635,22 @@ class _OrderbookInstrumentCard extends StatelessWidget {
                 onRowTap: loading
                     ? null
                     : (row) => onDepthRowTap(isAskRow: true, row: row),
+                isOwnWalletRow: state.auth == null
+                    ? null
+                    : (row) => dlcOrderbookRowIsOwnWalletOpenOrder(
+                        row: row,
+                        isAskRow: true,
+                        orders: state.orders,
+                        orderbookSideRows: state.orderbookAsks,
+                        selectedInstrumentId: id,
+                      ),
               ),
               const SizedBox(height: 14),
-              Text(
-                'Bids',
-                style: theme.textTheme.titleSmall?.copyWith(
-                  fontWeight: FontWeight.w700,
-                  color: const Color(0xFF1B5E20),
-                ),
+              _OrderbookSideHeader(
+                label: 'Bids',
+                color: const Color(0xFF1B5E20),
+                showInfo: state.auth != null,
+                onInfoTap: onOwnOrdersInfoTap,
               ),
               const SizedBox(height: 6),
               _OrderbookDepthTable(
@@ -2507,6 +2661,15 @@ class _OrderbookInstrumentCard extends StatelessWidget {
                 onRowTap: loading
                     ? null
                     : (row) => onDepthRowTap(isAskRow: false, row: row),
+                isOwnWalletRow: state.auth == null
+                    ? null
+                    : (row) => dlcOrderbookRowIsOwnWalletOpenOrder(
+                        row: row,
+                        isAskRow: false,
+                        orders: state.orders,
+                        orderbookSideRows: state.orderbookBids,
+                        selectedInstrumentId: id,
+                      ),
               ),
             ],
             if (id != null &&

@@ -101,12 +101,12 @@ void main() {
   });
 
   group('isDlcOpenOrder', () {
-    test('open and pending_accept on order.status', () {
+    test('only open status counts as open', () {
       expect(isDlcOpenOrder(_order(status: 'open')), true);
-      expect(isDlcOpenOrder(_order(status: 'pending_accept')), true);
+      expect(isDlcOpenOrder(_order(status: 'pending_accept')), false);
       expect(
         isDlcOpenOrder(_order(status: 'filled', pendingMatchAccept: true)),
-        true,
+        false,
       );
     });
 
@@ -146,6 +146,26 @@ void main() {
         ),
         true,
       );
+      expect(
+        isDlcClosedOrder(
+          _order(
+            status: 'filled',
+            dlcId: 'dlc-1',
+            dlcStatus: 'refund_broadcasted',
+          ),
+        ),
+        true,
+      );
+      expect(
+        isDlcClosedOrder(
+          _order(
+            status: 'filled',
+            dlcId: 'dlc-1',
+            dlcStatus: 'cet_broadcasted',
+          ),
+        ),
+        true,
+      );
     });
   });
 
@@ -182,8 +202,35 @@ void main() {
       expect(isDlcLiveOrder(order), false);
     });
 
+    test('filled + refund_broadcasted dlcStatus is closed not live', () {
+      final order = _order(
+        status: 'filled',
+        dlcId: 'dlc-1',
+        dlcStatus: 'refund_broadcasted',
+      );
+      expect(isDlcClosedOrder(order), true);
+      expect(isDlcLiveOrder(order), false);
+    });
+
     test('open orders are not live', () {
       expect(isDlcLiveOrder(_order(status: 'open')), false);
+    });
+
+    test('pending_accept is live not open', () {
+      final pending = _order(status: 'pending_accept', dlcId: 'dlc-1');
+      expect(isDlcOpenOrder(pending), false);
+      expect(isDlcLiveOrder(pending), true);
+      expect(isDlcClosedOrder(pending), false);
+    });
+
+    test('pending_match_accept flag is live', () {
+      final taker = _order(
+        status: 'pending_accept',
+        pendingMatchAccept: true,
+        dlcId: 'dlc-1',
+      );
+      expect(isDlcLiveOrder(taker), true);
+      expect(isDlcOpenOrder(taker), false);
     });
 
     test('buckets are mutually exclusive for filled signed', () {
@@ -234,6 +281,284 @@ void main() {
 
     test('filled order uses is_maker when match_role missing', () {
       expect(formatDlcOrderRole(_order(status: 'filled', isMaker: false)), 'Taker');
+    });
+  });
+
+  group('dlcOrderbookRowIsOwnWalletOpenOrder', () {
+    DlcOrderSummary openSellOrder({
+      String orderId = 'mine-1',
+      String instrumentId = 'BTC-18MAR26-74100-C',
+      double quantity = 2,
+      double price = 5000000,
+    }) {
+      return DlcOrderSummary(
+        orderId: orderId,
+        dlcId: null,
+        status: 'open',
+        pendingMatchAccept: false,
+        matchedOrderId: null,
+        matchedDlcId: null,
+        isMaker: null,
+        matchRole: null,
+        signRequired: null,
+        dlcStatus: null,
+        settlementType: null,
+        confirmationStatus: null,
+        instrumentId: instrumentId,
+        side: 'sell',
+        quantity: quantity,
+        price: price,
+        createdAt: null,
+        sideCollateralSat: null,
+        partnerFeeSat: null,
+        networkFeeSat: null,
+        lastErrorReason: null,
+        lastErrorMessage: null,
+        oracleOutcomeValue: null,
+        fundingTxid: null,
+        closingTxid: null,
+        refundTxid: null,
+      );
+    }
+
+    Map<String, dynamic> askRow({String? orderId, int price = 5000000}) => {
+      'price': price,
+      'quantity': 2,
+      'instrument_id': 'BTC-18MAR26-74100-C',
+      if (orderId != null) 'order_id': orderId,
+    };
+
+    test('matches sell order on asks side when book is unambiguous', () {
+      final row = askRow();
+      expect(
+        dlcOrderbookRowIsOwnWalletOpenOrder(
+          row: row,
+          isAskRow: true,
+          orders: [openSellOrder()],
+          orderbookSideRows: [row],
+          selectedInstrumentId: 'BTC-18MAR26-74100-C',
+        ),
+        isTrue,
+      );
+    });
+
+    test('does not match buy order on asks side', () {
+      final buy = openSellOrder();
+      final row = askRow();
+      expect(
+        dlcOrderbookRowIsOwnWalletOpenOrder(
+          row: row,
+          isAskRow: true,
+          orders: [
+            DlcOrderSummary(
+              orderId: buy.orderId,
+              dlcId: buy.dlcId,
+              status: buy.status,
+              pendingMatchAccept: buy.pendingMatchAccept,
+              matchedOrderId: buy.matchedOrderId,
+              matchedDlcId: buy.matchedDlcId,
+              isMaker: buy.isMaker,
+              matchRole: buy.matchRole,
+              signRequired: buy.signRequired,
+              dlcStatus: buy.dlcStatus,
+              settlementType: buy.settlementType,
+              confirmationStatus: buy.confirmationStatus,
+              instrumentId: buy.instrumentId,
+              side: 'buy',
+              quantity: buy.quantity,
+              price: buy.price,
+              createdAt: buy.createdAt,
+              sideCollateralSat: buy.sideCollateralSat,
+              partnerFeeSat: buy.partnerFeeSat,
+              networkFeeSat: buy.networkFeeSat,
+              lastErrorReason: buy.lastErrorReason,
+              lastErrorMessage: buy.lastErrorMessage,
+              oracleOutcomeValue: buy.oracleOutcomeValue,
+              fundingTxid: buy.fundingTxid,
+              closingTxid: buy.closingTxid,
+              refundTxid: buy.refundTxid,
+            ),
+          ],
+          orderbookSideRows: [row],
+          selectedInstrumentId: 'BTC-18MAR26-74100-C',
+        ),
+        isFalse,
+      );
+    });
+
+    test('does not underline when another wallet has identical resting order', () {
+      DlcOrderSummary openBuyOrder({
+        String orderId = 'mine-1',
+        double quantity = 0.01,
+        double price = 5030000,
+      }) {
+        return DlcOrderSummary(
+          orderId: orderId,
+          dlcId: null,
+          status: 'open',
+          pendingMatchAccept: false,
+          matchedOrderId: null,
+          matchedDlcId: null,
+          isMaker: null,
+          matchRole: null,
+          signRequired: null,
+          dlcStatus: null,
+          settlementType: null,
+          confirmationStatus: null,
+          instrumentId: 'BTC-18MAR26-74100-C',
+          side: 'buy',
+          quantity: quantity,
+          price: price,
+          createdAt: null,
+          sideCollateralSat: null,
+          partnerFeeSat: null,
+          networkFeeSat: null,
+          lastErrorReason: null,
+          lastErrorMessage: null,
+          oracleOutcomeValue: null,
+          fundingTxid: null,
+          closingTxid: null,
+          refundTxid: null,
+        );
+      }
+
+      final rowA = {
+        'price': 50300,
+        'quantity': 0.01,
+        'instrument_id': 'BTC-18MAR26-74100-C',
+      };
+      final rowB = {
+        'price': 50300,
+        'quantity': 0.01,
+        'instrument_id': 'BTC-18MAR26-74100-C',
+      };
+      final book = [rowA, rowB];
+
+      expect(
+        dlcOrderbookRowIsOwnWalletOpenOrder(
+          row: rowA,
+          isAskRow: false,
+          orders: [openBuyOrder()],
+          orderbookSideRows: book,
+          selectedInstrumentId: 'BTC-18MAR26-74100-C',
+        ),
+        isFalse,
+      );
+      expect(
+        dlcOrderbookRowIsOwnWalletOpenOrder(
+          row: rowB,
+          isAskRow: false,
+          orders: [openBuyOrder()],
+          orderbookSideRows: book,
+          selectedInstrumentId: 'BTC-18MAR26-74100-C',
+        ),
+        isFalse,
+      );
+    });
+
+    test('matches when row price is line total divided by quantity', () {
+      final row = {
+        'price': 10000000,
+        'quantity': 2,
+        'instrument_id': 'BTC-18MAR26-74100-C',
+      };
+      expect(
+        dlcOrderbookRowIsOwnWalletOpenOrder(
+          row: row,
+          isAskRow: true,
+          orders: [openSellOrder()],
+          orderbookSideRows: [row],
+          selectedInstrumentId: 'BTC-18MAR26-74100-C',
+        ),
+        isTrue,
+      );
+    });
+
+    test('underlines both rows when wallet has two identical resting orders', () {
+      final rowA = {
+        'price': 50300,
+        'quantity': 0.01,
+        'instrument_id': 'BTC-18MAR26-74100-C',
+      };
+      final rowB = {
+        'price': 50300,
+        'quantity': 0.01,
+        'instrument_id': 'BTC-18MAR26-74100-C',
+      };
+      final orders = [
+        openSellOrder(orderId: 'mine-1', quantity: 0.01, price: 5030000),
+        openSellOrder(orderId: 'mine-2', quantity: 0.01, price: 5030000),
+      ];
+      final book = [rowA, rowB];
+
+      expect(
+        dlcOrderbookRowIsOwnWalletOpenOrder(
+          row: rowA,
+          isAskRow: true,
+          orders: orders,
+          orderbookSideRows: book,
+          selectedInstrumentId: 'BTC-18MAR26-74100-C',
+        ),
+        isTrue,
+      );
+      expect(
+        dlcOrderbookRowIsOwnWalletOpenOrder(
+          row: rowB,
+          isAskRow: true,
+          orders: orders,
+          orderbookSideRows: book,
+          selectedInstrumentId: 'BTC-18MAR26-74100-C',
+        ),
+        isTrue,
+      );
+    });
+
+    test('underlines aggregated row when two own orders sum to row quantity', () {
+      final row = {
+        'price': 100600,
+        'quantity': 0.02,
+        'instrument_id': 'BTC-18MAR26-74100-C',
+      };
+      final orders = [
+        openSellOrder(orderId: 'mine-1', quantity: 0.01, price: 5030000),
+        openSellOrder(orderId: 'mine-2', quantity: 0.01, price: 5030000),
+      ];
+
+      expect(
+        dlcOrderbookRowIsOwnWalletOpenOrder(
+          row: row,
+          isAskRow: true,
+          orders: orders,
+          orderbookSideRows: [row],
+          selectedInstrumentId: 'BTC-18MAR26-74100-C',
+        ),
+        isTrue,
+      );
+    });
+
+    test('matches by order_id when row includes coordinator order id', () {
+      final row = askRow(orderId: 'mine-1');
+      final other = askRow(orderId: 'other-wallet');
+      expect(
+        dlcOrderbookRowIsOwnWalletOpenOrder(
+          row: row,
+          isAskRow: true,
+          orders: [openSellOrder(orderId: 'mine-1')],
+          orderbookSideRows: [row, other],
+          selectedInstrumentId: 'BTC-18MAR26-74100-C',
+        ),
+        isTrue,
+      );
+      expect(
+        dlcOrderbookRowIsOwnWalletOpenOrder(
+          row: other,
+          isAskRow: true,
+          orders: [openSellOrder(orderId: 'mine-1')],
+          orderbookSideRows: [row, other],
+          selectedInstrumentId: 'BTC-18MAR26-74100-C',
+        ),
+        isFalse,
+      );
     });
   });
 }

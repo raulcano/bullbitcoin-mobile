@@ -145,7 +145,11 @@ class DlcRepository {
 
   Future<List<Map<String, dynamic>>> listInstruments() async {
     final payload = await _datasource.listInstruments();
-    return payload.whereType<Map<String, dynamic>>().toList();
+    final all = payload.whereType<Map<String, dynamic>>().toList();
+    if (ApiServiceConstants.dlcShowExpiredInstruments) {
+      return dlcSortInstrumentsLiveBeforeExpired(all);
+    }
+    return dlcLiveInstruments(all);
   }
 
   /// Calls `POST /orders/option-payout-simulation` with the active wallet token.
@@ -287,19 +291,35 @@ class DlcRepository {
     final auth = await getWalletAuth();
     if (auth == null) throw Exception('Wallet is not registered for DLC.');
     final env = await _environment();
-    final json = await _datasource.getOrder(
-      token: auth.walletToken,
-      orderId: orderId,
-    );
-    final local = await _orderStorage.getByOrderId(
-      environment: env,
-      walletOriginId: auth.walletOriginId,
-      orderId: orderId,
-    );
-    final order = _mapOrder(
-      _mergeCoordinatorOrderJson(remote: json, local: local),
-    );
-    return _mergeOrderWithDlcSnapshot(auth.walletToken, order);
+    try {
+      final json = await _datasource.getOrder(
+        token: auth.walletToken,
+        orderId: orderId,
+      );
+      final local = await _orderStorage.getByOrderId(
+        environment: env,
+        walletOriginId: auth.walletOriginId,
+        orderId: orderId,
+      );
+      final order = _mapOrder(
+        _mergeCoordinatorOrderJson(remote: json, local: local),
+      );
+      return _mergeOrderWithDlcSnapshot(
+        token: auth.walletToken,
+        environment: env,
+        auth: auth,
+        order: order,
+      );
+    } catch (e) {
+      if (isCoordinatorResourceNotFound(e)) {
+        await _purgeLocalCoordinatorSnapshot(
+          environment: env,
+          auth: auth,
+          orderId: orderId,
+        );
+      }
+      rethrow;
+    }
   }
 
   /// Scans active-wallet orders and runs taker accept / maker sign when required.
@@ -355,8 +375,17 @@ class DlcRepository {
           actions.add(action);
         }
       } catch (e) {
-        if (isCoordinatorOrderNotFound(e)) {
-          await _abandonOrderNotOnCoordinator(
+        if (isCoordinatorResourceNotFound(e)) {
+          await _purgeLocalCoordinatorSnapshot(
+            environment: env,
+            auth: auth,
+            orderId: order.orderId,
+            dlcId: order.dlcId,
+          );
+          continue;
+        }
+        if (isAcceptSigningNoLongerRequired(e)) {
+          await _tryReconcileTakerAccept(
             environment: env,
             auth: auth,
             orderId: order.orderId,
@@ -407,14 +436,21 @@ class DlcRepository {
         )
         .toList(growable: false);
     final merged = await Future.wait(
-      mapped.map((o) => _mergeOrderWithDlcSnapshot(auth.walletToken, o)),
+      mapped.map(
+        (o) => _mergeOrderWithDlcSnapshot(
+          token: auth.walletToken,
+          environment: env,
+          auth: auth,
+          order: o,
+        ),
+      ),
     );
     for (final json in payload.whereType<Map<String, dynamic>>()) {
       await _persistOrderSnapshot(environment: env, auth: auth, values: json);
     }
     return _appendLocalOnlyOrders(
       environment: env,
-      walletOriginId: auth.walletOriginId,
+      auth: auth,
       remote: merged,
       local: localSnapshots,
     );
@@ -435,8 +471,8 @@ class DlcRepository {
         syncAfter: syncAfter,
       );
     } catch (e) {
-      if (isCoordinatorOrderNotFound(e)) {
-        await _abandonOrderNotOnCoordinator(
+      if (isCoordinatorResourceNotFound(e)) {
+        await _purgeLocalCoordinatorSnapshot(
           environment: env,
           auth: auth,
           orderId: orderId,
@@ -555,7 +591,7 @@ class DlcRepository {
       }
       final keepForReconcile =
           e is DlcApiException && e.statusCode == 409 ||
-          _isTransientCreateOrderFailure(e);
+          _isTransientCoordinatorFailure(e);
       if (!keepForReconcile) {
         await _idempotencyStorage.clearCreateDraftKey(
           environment: env,
@@ -573,7 +609,7 @@ class DlcRepository {
     try {
       return await _datasource.createOrder(token: token, payload: payload);
     } catch (e) {
-      if (!_isTransientCreateOrderFailure(e)) rethrow;
+      if (!_isTransientCoordinatorFailure(e)) rethrow;
       return _datasource.createOrder(token: token, payload: payload);
     }
   }
@@ -639,7 +675,7 @@ class DlcRepository {
   }) async {
     final shouldReconcile =
         (error is DlcApiException && error.statusCode == 409) ||
-        _isTransientCreateOrderFailure(error);
+        _isTransientCoordinatorFailure(error);
     if (!shouldReconcile) return null;
 
     final existing = await _reconcileCreateConflict(
@@ -703,6 +739,7 @@ class DlcRepository {
     required String selectedInstrumentId,
     required String resolvedInstrumentId,
   }) async {
+    if (ApiServiceConstants.dlcShowExpiredInstruments) return;
     final instruments = await listInstruments();
     final found = instruments.any((i) {
       final liveId = dlcInstrumentId(i);
@@ -723,23 +760,111 @@ class DlcRepository {
     return msg.contains('timeout') || msg.contains('timed out');
   }
 
-  /// Network failures where the coordinator may still have persisted the order.
-  bool _isTransientCreateOrderFailure(Object e) {
+  /// Network failures where the coordinator may still have persisted the request.
+  bool _isTransientCoordinatorFailure(Object e) {
     if (e is DlcApiException) {
       if (e.isTimeout || e.isConnectionError) return true;
       if (e.statusCode != null) return false;
-      final msg = e.message.toLowerCase();
-      return msg.contains('connection errored') ||
-          msg.contains('connection error') ||
-          msg.contains('no route to host') ||
-          msg.contains('network is unreachable') ||
-          msg.contains('failed host lookup') ||
-          msg.contains('socketexception');
+      return isTransientDlcCoordinatorMessage(e.message);
     }
-    final msg = e.toString().toLowerCase();
-    return _isTimeoutError(e) ||
-        msg.contains('connection errored') ||
-        msg.contains('no route to host');
+    return isTransientDlcCoordinatorMessage(e.toString());
+  }
+
+  Future<void> _trySyncActiveWalletUtxosForNegotiation() async {
+    try {
+      await syncActiveWalletUtxos();
+    } catch (e) {
+      if (!_isTransientCoordinatorFailure(e)) rethrow;
+    }
+  }
+
+  Future<Map<String, dynamic>> _acceptContextWithTransientRetry({
+    required String token,
+    required String orderId,
+    required String fundingPubkeyHex,
+  }) async {
+    try {
+      return await _datasource.acceptContext(
+        token: token,
+        orderId: orderId,
+        fundingPubkeyHex: fundingPubkeyHex,
+      );
+    } catch (e) {
+      if (!_isTransientCoordinatorFailure(e)) rethrow;
+      return _datasource.acceptContext(
+        token: token,
+        orderId: orderId,
+        fundingPubkeyHex: fundingPubkeyHex,
+      );
+    }
+  }
+
+  Future<Map<String, dynamic>> _acceptMatchWithTransientRetry({
+    required String token,
+    required String orderId,
+    required Map<String, dynamic> payload,
+  }) async {
+    try {
+      return await _datasource.acceptMatch(
+        token: token,
+        orderId: orderId,
+        payload: payload,
+      );
+    } catch (e) {
+      if (!_isTransientCoordinatorFailure(e)) rethrow;
+      return _datasource.acceptMatch(
+        token: token,
+        orderId: orderId,
+        payload: payload,
+      );
+    }
+  }
+
+  Future<bool> _tryReconcileTakerAccept({
+    required Environment environment,
+    required DlcWalletAuth auth,
+    required String orderId,
+    String acceptContextFingerprint = '',
+  }) async {
+    try {
+      final json = await _datasource.getOrder(
+        token: auth.walletToken,
+        orderId: orderId,
+      );
+      final local = await _orderStorage.getByOrderId(
+        environment: environment,
+        walletOriginId: auth.walletOriginId,
+        orderId: orderId,
+      );
+      final merged = _mergeCoordinatorOrderJson(remote: json, local: local);
+      final order = _mapOrder(merged);
+      if (needsDlcTakerAccept(order)) return false;
+      await _persistOrderSnapshot(
+        environment: environment,
+        auth: auth,
+        values: merged,
+      );
+      await _negotiationStorage.upsertOrderState(
+        environment: environment,
+        walletOriginId: auth.walletOriginId,
+        orderId: orderId,
+        values: {'negotiation_status': 'accept_reconciled'},
+      );
+      await _idempotencyStorage.clearAllKeysForOrder(
+        environment: environment,
+        orderId: orderId,
+      );
+      if (acceptContextFingerprint.isNotEmpty) {
+        await _idempotencyStorage.clearAcceptKey(
+          environment: environment,
+          orderId: orderId,
+          contextFingerprint: acceptContextFingerprint,
+        );
+      }
+      return true;
+    } catch (_) {
+      return false;
+    }
   }
 
   /// Advances an order through coordinator API state transitions using the
@@ -763,16 +888,40 @@ class DlcRepository {
       wallet: wallet,
     );
 
-    var current = _mapOrder(
-      await _datasource.getOrder(token: auth.walletToken, orderId: orderId),
-    );
+    DlcOrderSummary current;
+    try {
+      current = _mapOrder(
+        await _datasource.getOrder(token: auth.walletToken, orderId: orderId),
+      );
+    } catch (e) {
+      if (isCoordinatorResourceNotFound(e)) {
+        await _purgeLocalCoordinatorSnapshot(
+          environment: env,
+          auth: auth,
+          orderId: orderId,
+        );
+      }
+      rethrow;
+    }
     var steps = 0;
 
     while (steps < maxSteps) {
       steps += 1;
-      current = _mapOrder(
-        await _datasource.getOrder(token: auth.walletToken, orderId: orderId),
-      );
+      try {
+        current = _mapOrder(
+          await _datasource.getOrder(token: auth.walletToken, orderId: orderId),
+        );
+      } catch (e) {
+        if (isCoordinatorResourceNotFound(e)) {
+          await _purgeLocalCoordinatorSnapshot(
+            environment: env,
+            auth: auth,
+            orderId: orderId,
+            dlcId: current.dlcId,
+          );
+        }
+        rethrow;
+      }
 
       if (needsDlcTakerAccept(current)) {
         await _submitAcceptArtifacts(
@@ -797,6 +946,15 @@ class DlcRepository {
           );
           continue;
         } catch (e) {
+          if (isCoordinatorResourceNotFound(e)) {
+            await _purgeLocalCoordinatorSnapshot(
+              environment: env,
+              auth: auth,
+              orderId: current.orderId,
+              dlcId: current.dlcId,
+            );
+            rethrow;
+          }
           final msg = e.toString().toLowerCase();
           if (!msg.contains(
                 'only the maker-side dlc may request sign-context',
@@ -811,9 +969,21 @@ class DlcRepository {
       break;
     }
 
-    current = _mapOrder(
-      await _datasource.getOrder(token: auth.walletToken, orderId: orderId),
-    );
+    try {
+      current = _mapOrder(
+        await _datasource.getOrder(token: auth.walletToken, orderId: orderId),
+      );
+    } catch (e) {
+      if (isCoordinatorResourceNotFound(e)) {
+        await _purgeLocalCoordinatorSnapshot(
+          environment: env,
+          auth: auth,
+          orderId: orderId,
+          dlcId: current.dlcId,
+        );
+      }
+      rethrow;
+    }
 
     if (current.dlcId != null) {
       try {
@@ -827,7 +997,16 @@ class DlcRepository {
         );
         current = _mergeSettlementAndDetail(current, settlement, detail);
       } catch (e) {
-        debugPrint('DLC settlement/detail fetch skipped: $e');
+        if (isCoordinatorResourceNotFound(e)) {
+          await _purgeLocalCoordinatorSnapshot(
+            environment: env,
+            auth: auth,
+            orderId: orderId,
+            dlcId: current.dlcId,
+          );
+        } else {
+          debugPrint('DLC settlement/detail fetch skipped: $e');
+        }
       }
     }
 
@@ -843,13 +1022,60 @@ class DlcRepository {
     return progressOrderLifecycle(orderId: orderId, maxSteps: 8);
   }
 
+  Future<DlcOrderSummary?> _fetchFreshOrderForNegotiation({
+    required Environment environment,
+    required DlcWalletAuth auth,
+    required String orderId,
+  }) async {
+    try {
+      final json = await _datasource.getOrder(
+        token: auth.walletToken,
+        orderId: orderId,
+      );
+      final local = await _orderStorage.getByOrderId(
+        environment: environment,
+        walletOriginId: auth.walletOriginId,
+        orderId: orderId,
+      );
+      final merged = _mergeCoordinatorOrderJson(remote: json, local: local);
+      await _persistOrderSnapshot(
+        environment: environment,
+        auth: auth,
+        values: merged,
+      );
+      final mapped = _mapOrder(merged);
+      return _mergeOrderWithDlcSnapshot(
+        token: auth.walletToken,
+        environment: environment,
+        auth: auth,
+        order: mapped,
+      );
+    } catch (e) {
+      if (isCoordinatorResourceNotFound(e)) {
+        await _purgeLocalCoordinatorSnapshot(
+          environment: environment,
+          auth: auth,
+          orderId: orderId,
+        );
+      }
+      return null;
+    }
+  }
+
   Future<DlcNegotiationAction?> _negotiateOrderIfNeeded({
     required DlcWalletAuth auth,
     required DlcOrderSummary order,
   }) async {
-    if (isDlcNegotiationComplete(order)) return null;
-
     final env = await _environment();
+    final current =
+        await _fetchFreshOrderForNegotiation(
+          environment: env,
+          auth: auth,
+          orderId: order.orderId,
+        ) ??
+        order;
+    if (isDlcNegotiationComplete(current)) return null;
+
     final wallet = await _localSigner.getBitcoinWalletByOriginId(
       environment: env,
       walletOriginId: auth.walletOriginId,
@@ -858,37 +1084,37 @@ class DlcRepository {
       environment: env,
       auth: auth,
       wallet: wallet,
-      orderId: order.orderId,
+      orderId: current.orderId,
     );
 
-    if (needsDlcTakerAccept(order)) {
+    if (needsDlcTakerAccept(current)) {
       await _submitAcceptArtifacts(
         environment: env,
         token: auth.walletToken,
         wallet: wallet,
-        orderId: order.orderId,
+        orderId: current.orderId,
         fundingPubkeyHex: funding.pubkeyHex,
       );
       return DlcNegotiationAction(
         kind: DlcNegotiationActionKind.takerAccept,
-        orderId: order.orderId,
-        dlcId: order.dlcId,
+        orderId: current.orderId,
+        dlcId: current.dlcId,
       );
     }
 
-    if (needsDlcMakerSign(order) && order.dlcId != null) {
+    if (needsDlcMakerSign(current) && current.dlcId != null) {
       await _submitMakerSignArtifacts(
         environment: env,
         token: auth.walletToken,
         wallet: wallet,
-        dlcId: order.dlcId!,
-        orderId: order.orderId,
+        dlcId: current.dlcId!,
+        orderId: current.orderId,
         fundingPubkeyHex: funding.pubkeyHex,
       );
       return DlcNegotiationAction(
         kind: DlcNegotiationActionKind.makerSign,
-        orderId: order.orderId,
-        dlcId: order.dlcId,
+        orderId: current.orderId,
+        dlcId: current.dlcId,
       );
     }
 
@@ -937,13 +1163,35 @@ class DlcRepository {
     required String orderId,
     required String fundingPubkeyHex,
   }) async {
-    await syncActiveWalletUtxos();
+    await _trySyncActiveWalletUtxosForNegotiation();
+    final auth = await getWalletAuth();
     for (var attempt = 0; attempt < 2; attempt++) {
-      final context = await _datasource.acceptContext(
-        token: token,
-        orderId: orderId,
-        fundingPubkeyHex: fundingPubkeyHex,
-      );
+      final Map<String, dynamic> context;
+      try {
+        context = await _acceptContextWithTransientRetry(
+          token: token,
+          orderId: orderId,
+          fundingPubkeyHex: fundingPubkeyHex,
+        );
+      } catch (e) {
+        if (auth != null && isCoordinatorResourceNotFound(e)) {
+          await _purgeLocalCoordinatorSnapshot(
+            environment: environment,
+            auth: auth,
+            orderId: orderId,
+          );
+          return;
+        }
+        if (auth != null && isAcceptSigningNoLongerRequired(e)) {
+          await _tryReconcileTakerAccept(
+            environment: environment,
+            auth: auth,
+            orderId: orderId,
+          );
+          return;
+        }
+        rethrow;
+      }
       final fingerprint = context['context_fingerprint'] as String? ?? '';
       final idempotencyKey =
           await _idempotencyStorage.getOrCreateAcceptKeyForFingerprint(
@@ -951,7 +1199,6 @@ class DlcRepository {
         orderId: orderId,
         contextFingerprint: fingerprint,
       );
-      final auth = await getWalletAuth();
       if (auth != null) {
         await _persistOrderSnapshot(
           environment: environment,
@@ -976,14 +1223,16 @@ class DlcRepository {
           },
         );
       }
+      final walletUtxos = await _getWalletUtxosUsecase.execute(walletId: wallet.id);
       final signed = await _localSigner.signDlcContext(
         wallet: wallet,
         contextTag: 'accept',
         context: context,
         fundingPubkeyHex: fundingPubkeyHex,
+        walletUtxos: walletUtxos,
       );
       try {
-        final accepted = await _datasource.acceptMatch(
+        final accepted = await _acceptMatchWithTransientRetry(
           token: token,
           orderId: orderId,
           payload: {
@@ -1031,6 +1280,25 @@ class DlcRepository {
           );
           continue;
         }
+        if (auth != null && isCoordinatorResourceNotFound(e)) {
+          await _purgeLocalCoordinatorSnapshot(
+            environment: environment,
+            auth: auth,
+            orderId: orderId,
+          );
+          return;
+        }
+        if (auth != null &&
+            (_isTransientCoordinatorFailure(e) ||
+                isAcceptSigningNoLongerRequired(e))) {
+          final reconciled = await _tryReconcileTakerAccept(
+            environment: environment,
+            auth: auth,
+            orderId: orderId,
+            acceptContextFingerprint: fingerprint,
+          );
+          if (reconciled) return;
+        }
         rethrow;
       }
     }
@@ -1045,11 +1313,26 @@ class DlcRepository {
     required String fundingPubkeyHex,
   }) async {
     final auth = await getWalletAuth();
+    await _trySyncActiveWalletUtxosForNegotiation();
     for (var attempt = 0; attempt < 2; attempt++) {
-      final signContext = await _datasource.signContext(
-        token: token,
-        dlcId: dlcId,
-      );
+      final Map<String, dynamic> signContext;
+      try {
+        signContext = await _datasource.signContext(
+          token: token,
+          dlcId: dlcId,
+        );
+      } catch (e) {
+        if (auth != null && isCoordinatorResourceNotFound(e)) {
+          await _purgeLocalCoordinatorSnapshot(
+            environment: environment,
+            auth: auth,
+            orderId: orderId,
+            dlcId: dlcId,
+          );
+          return;
+        }
+        rethrow;
+      }
       final fingerprint = signContext['context_fingerprint'] as String? ??
           signContext['fingerprint'] as String? ??
           '';
@@ -1071,11 +1354,13 @@ class DlcRepository {
           },
         );
       }
+      final walletUtxos = await _getWalletUtxosUsecase.execute(walletId: wallet.id);
       final makerSigned = await _localSigner.signDlcContext(
         wallet: wallet,
         contextTag: 'sign',
         context: signContext,
         fundingPubkeyHex: fundingPubkeyHex,
+        walletUtxos: walletUtxos,
       );
       try {
         final signedResponse = await _datasource.signDlc(
@@ -1128,6 +1413,15 @@ class DlcRepository {
           );
           continue;
         }
+        if (auth != null && isCoordinatorResourceNotFound(e)) {
+          await _purgeLocalCoordinatorSnapshot(
+            environment: environment,
+            auth: auth,
+            orderId: orderId,
+            dlcId: dlcId,
+          );
+          return;
+        }
         rethrow;
       }
     }
@@ -1140,10 +1434,12 @@ class DlcRepository {
         m.contains('stale_accept_context');
   }
 
-  Future<DlcOrderSummary> _mergeOrderWithDlcSnapshot(
-    String token,
-    DlcOrderSummary order,
-  ) async {
+  Future<DlcOrderSummary> _mergeOrderWithDlcSnapshot({
+    required String token,
+    required Environment environment,
+    required DlcWalletAuth auth,
+    required DlcOrderSummary order,
+  }) async {
     if (order.dlcId == null) return order;
     try {
       final detail = await _datasource.getDlc(
@@ -1151,7 +1447,15 @@ class DlcRepository {
         dlcId: order.dlcId!,
       );
       return _mergeDlcDetailIntoOrder(order, detail);
-    } catch (_) {
+    } catch (e) {
+      if (isCoordinatorResourceNotFound(e)) {
+        await _purgeLocalCoordinatorSnapshot(
+          environment: environment,
+          auth: auth,
+          orderId: order.orderId,
+          dlcId: order.dlcId,
+        );
+      }
       return order;
     }
   }
@@ -1193,8 +1497,8 @@ class DlcRepository {
       try {
         return [await getOrder(focusOrderId)];
       } catch (e) {
-        if (isCoordinatorOrderNotFound(e)) {
-          await _abandonOrderNotOnCoordinator(
+        if (isCoordinatorResourceNotFound(e)) {
+          await _purgeLocalCoordinatorSnapshot(
             environment: environment,
             auth: auth,
             orderId: focusOrderId,
@@ -1213,6 +1517,12 @@ class DlcRepository {
         walletOriginId: auth.walletOriginId,
         orderId: order.orderId,
       )) {
+        await _purgeLocalCoordinatorSnapshot(
+          environment: environment,
+          auth: auth,
+          orderId: order.orderId,
+          dlcId: order.dlcId,
+        );
         continue;
       }
       targets.add(order);
@@ -1220,26 +1530,50 @@ class DlcRepository {
     return targets;
   }
 
-  Future<void> _abandonOrderNotOnCoordinator({
+  Future<void> _purgeLocalCoordinatorSnapshot({
     required Environment environment,
     required DlcWalletAuth auth,
-    required String orderId,
+    String? orderId,
+    String? dlcId,
   }) async {
-    await _negotiationStorage.markOrderNotFoundOnCoordinator(
-      environment: environment,
-      walletOriginId: auth.walletOriginId,
-      orderId: orderId,
-    );
-    await _orderStorage.removeOrder(
-      environment: environment,
-      walletOriginId: auth.walletOriginId,
-      orderId: orderId,
-    );
+    final resolvedOrderId = orderId ??
+        (dlcId == null
+            ? null
+            : await _orderStorage.orderIdForDlcId(
+                environment: environment,
+                walletOriginId: auth.walletOriginId,
+                dlcId: dlcId,
+              ));
+    final resolvedDlcId = dlcId;
+
+    if (resolvedOrderId != null && resolvedOrderId.isNotEmpty) {
+      await _negotiationStorage.removeOrderState(
+        environment: environment,
+        walletOriginId: auth.walletOriginId,
+        orderId: resolvedOrderId,
+      );
+      await _orderStorage.removeOrder(
+        environment: environment,
+        walletOriginId: auth.walletOriginId,
+        orderId: resolvedOrderId,
+      );
+      await _idempotencyStorage.clearAllKeysForOrder(
+        environment: environment,
+        orderId: resolvedOrderId,
+      );
+    }
+
+    if (resolvedDlcId != null && resolvedDlcId.isNotEmpty) {
+      await _idempotencyStorage.clearAllKeysForDlc(
+        environment: environment,
+        dlcId: resolvedDlcId,
+      );
+    }
   }
 
   Future<List<DlcOrderSummary>> _appendLocalOnlyOrders({
     required Environment environment,
-    required String walletOriginId,
+    required DlcWalletAuth auth,
     required List<DlcOrderSummary> remote,
     required List<Map<String, dynamic>> local,
   }) async {
@@ -1252,12 +1586,37 @@ class DlcRepository {
       }
       if (await _negotiationStorage.isOrderAbandonedNotFound(
         environment: environment,
-        walletOriginId: walletOriginId,
+        walletOriginId: auth.walletOriginId,
         orderId: orderId,
       )) {
+        await _purgeLocalCoordinatorSnapshot(
+          environment: environment,
+          auth: auth,
+          orderId: orderId,
+          dlcId: json['dlc_id']?.toString(),
+        );
         continue;
       }
-      localOnly.add(_mapOrder(json));
+      try {
+        final fresh = await _datasource.getOrder(
+          token: auth.walletToken,
+          orderId: orderId,
+        );
+        localOnly.add(
+          _mapOrder(
+            _mergeCoordinatorOrderJson(remote: fresh, local: json),
+          ),
+        );
+      } catch (e) {
+        if (isCoordinatorResourceNotFound(e)) {
+          await _purgeLocalCoordinatorSnapshot(
+            environment: environment,
+            auth: auth,
+            orderId: orderId,
+            dlcId: json['dlc_id']?.toString(),
+          );
+        }
+      }
     }
     return [...remote, ...localOnly];
   }
@@ -1375,7 +1734,10 @@ class DlcRepository {
     }
     if (remote['pending_match_accept'] != true &&
         local['pending_match_accept'] == true) {
-      merged['pending_match_accept'] = true;
+      final remoteStatus = (remote['status'] as String?)?.toLowerCase();
+      if (remoteStatus == 'pending_accept') {
+        merged['pending_match_accept'] = true;
+      }
     }
     return merged;
   }

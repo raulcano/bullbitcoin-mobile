@@ -3,6 +3,9 @@ import 'package:bb_mobile/features/dlc/domain/dlc_models.dart';
 
 class DlcState {
   final bool loading;
+
+  /// True while a user-initiated action blocks the UI (register, activate, create order).
+  final bool actionInProgress;
   final bool processingOrder;
   final DlcWalletAuth? auth;
   final List<Map<String, dynamic>> instruments;
@@ -36,6 +39,7 @@ class DlcState {
 
   const DlcState({
     required this.loading,
+    required this.actionInProgress,
     required this.processingOrder,
     required this.auth,
     required this.instruments,
@@ -68,6 +72,7 @@ class DlcState {
 
   factory DlcState.initial() => DlcState(
     loading: false,
+    actionInProgress: false,
     processingOrder: false,
     auth: null,
     instruments: [],
@@ -100,6 +105,7 @@ class DlcState {
 
   DlcState copyWith({
     bool? loading,
+    bool? actionInProgress,
     bool? processingOrder,
     DlcWalletAuth? auth,
     bool clearAuth = false,
@@ -141,6 +147,7 @@ class DlcState {
   }) {
     return DlcState(
       loading: loading ?? this.loading,
+      actionInProgress: actionInProgress ?? this.actionInProgress,
       processingOrder: processingOrder ?? this.processingOrder,
       auth: clearAuth ? null : (auth ?? this.auth),
       instruments: instruments ?? this.instruments,

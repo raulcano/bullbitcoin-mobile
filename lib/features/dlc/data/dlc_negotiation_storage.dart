@@ -62,6 +62,24 @@ class DlcNegotiationStorage {
     );
   }
 
+  Future<void> removeOrderState({
+    required Environment environment,
+    required String walletOriginId,
+    required String orderId,
+  }) async {
+    final store = await _load(environment);
+    final wallet = store[walletOriginId];
+    if (wallet is! Map) return;
+    final updated = Map<String, dynamic>.from(wallet);
+    updated.remove(orderId);
+    if (updated.isEmpty) {
+      store.remove(walletOriginId);
+    } else {
+      store[walletOriginId] = updated;
+    }
+    await _save(environment, store);
+  }
+
   Future<void> upsertOrderState({
     required Environment environment,
     required String walletOriginId,

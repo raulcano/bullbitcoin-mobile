@@ -73,8 +73,35 @@ class DlcOrderStorage {
     required String orderId,
   }) async {
     final store = await _load(environment);
-    store.remove(_key(walletOriginId, orderId));
+    final keysToRemove = store.entries
+        .where(
+          (entry) =>
+              entry.value['wallet_origin_id'] == walletOriginId &&
+              (entry.key == _key(walletOriginId, orderId) ||
+                  entry.value['order_id']?.toString() == orderId),
+        )
+        .map((entry) => entry.key)
+        .toList(growable: false);
+    for (final key in keysToRemove) {
+      store.remove(key);
+    }
     await _save(environment, store);
+  }
+
+  Future<String?> orderIdForDlcId({
+    required Environment environment,
+    required String walletOriginId,
+    required String dlcId,
+  }) async {
+    final store = await _load(environment);
+    for (final entry in store.entries) {
+      if (entry.value['wallet_origin_id'] != walletOriginId) continue;
+      if (entry.value['dlc_id']?.toString() == dlcId) {
+        final orderId = entry.value['order_id']?.toString();
+        if (orderId != null && orderId.isNotEmpty) return orderId;
+      }
+    }
+    return null;
   }
 
   Future<List<Map<String, dynamic>>> listForWallet({
