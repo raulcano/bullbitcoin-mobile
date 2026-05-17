@@ -45,7 +45,12 @@ class DlcAuthStorage {
       final match = all.where((item) => item.walletOriginId == activeOriginId);
       if (match.isNotEmpty) return match.first;
     }
-    return all.first;
+    return null;
+  }
+
+  Future<String?> getActiveWalletOriginId(Environment environment) async {
+    final decoded = await _decode(environment);
+    return decoded?.activeWalletOriginId;
   }
 
   Future<List<DlcWalletAuth>> getAll(Environment environment) async {
@@ -84,7 +89,7 @@ class DlcAuthStorage {
         .where((item) => item.walletOriginId != walletOriginId)
         .toList();
     final nextActive = decoded.activeWalletOriginId == walletOriginId
-        ? (next.isEmpty ? null : next.first.walletOriginId)
+        ? null
         : decoded.activeWalletOriginId;
     await _saveAll(environment, next, activeWalletOriginId: nextActive);
   }

@@ -1,3 +1,7 @@
+import 'dlc_order_in_flight.dart';
+
+export 'dlc_order_in_flight.dart' show DlcOrderInFlightPhase;
+
 enum DlcOptionType { call, put }
 
 enum DlcOrderSide { buy, sell }
@@ -152,6 +156,7 @@ class DlcOrderSummary {
   final String? dlcId;
   final String status;
   final bool pendingMatchAccept;
+  final DlcOrderInFlightPhase? inFlightPhase;
   final String? matchedOrderId;
   final String? matchedDlcId;
   final bool? isMaker;
@@ -180,6 +185,7 @@ class DlcOrderSummary {
     required this.dlcId,
     required this.status,
     required this.pendingMatchAccept,
+    this.inFlightPhase,
     required this.matchedOrderId,
     required this.matchedDlcId,
     required this.isMaker,
@@ -203,6 +209,69 @@ class DlcOrderSummary {
     required this.closingTxid,
     required this.refundTxid,
   });
+
+  DlcOrderSummary copyWith({
+    String? orderId,
+    String? dlcId,
+    String? status,
+    bool? pendingMatchAccept,
+    DlcOrderInFlightPhase? inFlightPhase,
+    bool clearInFlightPhase = false,
+    String? matchedOrderId,
+    String? matchedDlcId,
+    bool? isMaker,
+    String? matchRole,
+    bool? signRequired,
+    String? dlcStatus,
+    String? settlementType,
+    String? confirmationStatus,
+    String? instrumentId,
+    String? side,
+    double? quantity,
+    double? price,
+    DateTime? createdAt,
+    double? sideCollateralSat,
+    double? partnerFeeSat,
+    double? networkFeeSat,
+    String? lastErrorReason,
+    String? lastErrorMessage,
+    String? oracleOutcomeValue,
+    String? fundingTxid,
+    String? closingTxid,
+    String? refundTxid,
+  }) {
+    return DlcOrderSummary(
+      orderId: orderId ?? this.orderId,
+      dlcId: dlcId ?? this.dlcId,
+      status: status ?? this.status,
+      pendingMatchAccept: pendingMatchAccept ?? this.pendingMatchAccept,
+      inFlightPhase: clearInFlightPhase
+          ? null
+          : (inFlightPhase ?? this.inFlightPhase),
+      matchedOrderId: matchedOrderId ?? this.matchedOrderId,
+      matchedDlcId: matchedDlcId ?? this.matchedDlcId,
+      isMaker: isMaker ?? this.isMaker,
+      matchRole: matchRole ?? this.matchRole,
+      signRequired: signRequired ?? this.signRequired,
+      dlcStatus: dlcStatus ?? this.dlcStatus,
+      settlementType: settlementType ?? this.settlementType,
+      confirmationStatus: confirmationStatus ?? this.confirmationStatus,
+      instrumentId: instrumentId ?? this.instrumentId,
+      side: side ?? this.side,
+      quantity: quantity ?? this.quantity,
+      price: price ?? this.price,
+      createdAt: createdAt ?? this.createdAt,
+      sideCollateralSat: sideCollateralSat ?? this.sideCollateralSat,
+      partnerFeeSat: partnerFeeSat ?? this.partnerFeeSat,
+      networkFeeSat: networkFeeSat ?? this.networkFeeSat,
+      lastErrorReason: lastErrorReason ?? this.lastErrorReason,
+      lastErrorMessage: lastErrorMessage ?? this.lastErrorMessage,
+      oracleOutcomeValue: oracleOutcomeValue ?? this.oracleOutcomeValue,
+      fundingTxid: fundingTxid ?? this.fundingTxid,
+      closingTxid: closingTxid ?? this.closingTxid,
+      refundTxid: refundTxid ?? this.refundTxid,
+    );
+  }
 }
 
 class DlcSigningResult {

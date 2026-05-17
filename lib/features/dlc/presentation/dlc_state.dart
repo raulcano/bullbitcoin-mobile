@@ -37,6 +37,9 @@ class DlcState {
   final bool coordinatorReadinessFailed;
   final String? coordinatorTradingHint;
 
+  /// Set when the user pre-fills create from the orderbook (likely match).
+  final bool createOrderMatchIntent;
+
   const DlcState({
     required this.loading,
     required this.actionInProgress,
@@ -68,6 +71,7 @@ class DlcState {
     required this.coordinatorReadiness,
     required this.coordinatorReadinessFailed,
     required this.coordinatorTradingHint,
+    required this.createOrderMatchIntent,
   });
 
   factory DlcState.initial() => DlcState(
@@ -101,6 +105,7 @@ class DlcState {
     coordinatorReadiness: null,
     coordinatorReadinessFailed: false,
     coordinatorTradingHint: null,
+    createOrderMatchIntent: false,
   );
 
   DlcState copyWith({
@@ -144,6 +149,8 @@ class DlcState {
     bool? coordinatorReadinessFailed,
     String? coordinatorTradingHint,
     bool clearCoordinatorTradingHint = false,
+    bool? createOrderMatchIntent,
+    bool clearCreateOrderMatchIntent = false,
   }) {
     return DlcState(
       loading: loading ?? this.loading,
@@ -192,6 +199,9 @@ class DlcState {
       coordinatorTradingHint: clearCoordinatorTradingHint
           ? null
           : (coordinatorTradingHint ?? this.coordinatorTradingHint),
+      createOrderMatchIntent: clearCreateOrderMatchIntent
+          ? false
+          : (createOrderMatchIntent ?? this.createOrderMatchIntent),
     );
   }
 }

@@ -87,18 +87,19 @@ String dlcNormalizeStrikeToken(double strike) {
   return strike.toStringAsFixed(8).replaceFirst(RegExp(r'\.?0+$'), '');
 }
 
-/// Short label for dropdowns (API id + optional oracle label).
+/// Instrument id for UI display (hides `-STRIKE-` template placeholder).
+String dlcInstrumentDisplayId(String? rawId) {
+  if (rawId == null || rawId.isEmpty) return '-';
+  return rawId.replaceAll('-STRIKE-', '-');
+}
+
+/// Short label for instrument dropdowns (id only, no oracle).
 String dlcInstrumentLabel(Map<String, dynamic> instrument) {
-  final id = dlcInstrumentId(instrument) ?? '?';
-  final oracle = instrument['oracle_label']?.toString().trim();
-  var label = id;
-  if (oracle != null && oracle.isNotEmpty) {
-    label = '$id · $oracle';
-  }
+  final id = dlcInstrumentDisplayId(dlcInstrumentId(instrument));
   if (isDlcInstrumentExpired(instrument)) {
-    return '$label (expired)';
+    return '$id (expired)';
   }
-  return label;
+  return id;
 }
 
 /// Parsed expiry from coordinator [InstrumentResponse.expires_at] (ISO-8601).

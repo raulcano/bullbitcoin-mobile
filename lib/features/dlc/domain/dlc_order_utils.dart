@@ -39,6 +39,77 @@ String dlcFormatGroupedSatoshis(int? sats) {
   return NumberFormat('#,##0', 'en_US').format(sats);
 }
 
+/// Coordinator option convention: seller posts 1 BTC collateral per contract.
+const int dlcSatsPerOptionContract = 100000000;
+
+double? _readCollateralField(Map<String, dynamic> json, List<String> keys) {
+  for (final key in keys) {
+    final value = json[key];
+    if (value is num) return value.toDouble();
+    if (value is String) {
+      final parsed = double.tryParse(value);
+      if (parsed != null) return parsed;
+    }
+  }
+  return null;
+}
+
+/// Seller (short) BTC collateral for an order — same for both parties in a match.
+double? dlcSellerCollateralSats({
+  Map<String, dynamic>? json,
+  String? side,
+  double? quantity,
+}) {
+  if (json != null) {
+    final explicit = _readCollateralField(json, [
+      'seller_collateral_sats',
+      'seller_collateral_sat',
+      'sell_collateral_sats',
+      'short_collateral_sats',
+    ]);
+    if (explicit != null && explicit > 0) return explicit;
+
+    final sideLower = side?.toLowerCase();
+    if (sideLower == 'buy') {
+      final acceptor = _readCollateralField(json, [
+        'acceptor_collateral_sats',
+        'acceptor_collateral_sat',
+      ]);
+      if (acceptor != null && acceptor > 0) return acceptor;
+    } else if (sideLower == 'sell') {
+      final offerer = _readCollateralField(json, [
+        'offerer_collateral_sats',
+        'offerer_collateral_sat',
+      ]);
+      if (offerer != null && offerer > 0) return offerer;
+    }
+
+    final shortCollateral = _readCollateralField(json, [
+      'collateral_sats',
+      'collateral_sat',
+    ]);
+    if (shortCollateral != null && shortCollateral > 0) {
+      return shortCollateral;
+    }
+  }
+
+  if (quantity != null && quantity > 0) {
+    return quantity * dlcSatsPerOptionContract;
+  }
+  return null;
+}
+
+/// Seller collateral on [DlcOrderSummary] (stored in [DlcOrderSummary.sideCollateralSat]).
+double? dlcOrderSellerCollateralSats(DlcOrderSummary order) {
+  return order.sideCollateralSat;
+}
+
+String dlcFormatOrderSellerCollateral(DlcOrderSummary order) {
+  return dlcFormatGroupedSatoshis(
+    dlcOrderSellerCollateralSats(order)?.round(),
+  );
+}
+
 /// Premium per contract for UI (grouped, no decimals).
 String dlcFormatOrderPremiumPerContract(DlcOrderSummary order) {
   final sats = dlcPremiumPerContractSatoshisFromCoordinatorRaw(order.price);

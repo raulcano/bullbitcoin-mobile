@@ -9,18 +9,17 @@ import 'package:bb_mobile/core/utils/uint_8_list_x.dart';
 import 'package:bb_mobile/core/wallet/data/repositories/wallet_repository.dart';
 import 'package:bb_mobile/core/wallet/domain/entities/wallet.dart';
 import 'package:bb_mobile/core/wallet/domain/entities/wallet_utxo.dart';
-import 'package:bb_mobile/features/dlc/domain/dlc_cet_adaptor_signing.dart';
-import 'package:bb_mobile/features/dlc/domain/dlc_funding_signature_wire.dart';
+import 'package:bb_mobile/features/dlc/domain/dlc_context_signing_isolate.dart';
+import 'package:bb_mobile/features/dlc/domain/dlc_ecdsa_der.dart';
 import 'package:bb_mobile/features/dlc/domain/dlc_models.dart';
 import 'package:bip32_keys/bip32_keys.dart';
-import 'package:convert/convert.dart';
 import 'package:crypto/crypto.dart';
 import 'package:pointycastle/digests/ripemd160.dart';
 
 /// Local signer for DLC coordinator accept/sign flows.
 ///
-/// CET adaptor signatures use the core ECDSA adaptor module (162-byte wire
-/// layout). Refund and funding inputs remain compact ECDSA over coordinator sighashes.
+/// Heavy signing (CET adaptors, refund, funding witnesses) runs in a background
+/// isolate via [runDlcContextSigningOffMainThread] so the UI thread stays responsive.
 class DlcLocalSigner {
   final WalletRepository _walletRepository;
   final SeedRepository _seedRepository;
@@ -95,7 +94,7 @@ class DlcLocalSigner {
     final signature = Uint8List.fromList(
       key.sign(Uint8List.fromList(hash)) as List<int>,
     );
-    return _toDerHex(signature, includeHashType: true);
+    return compactSecp256k1SignatureToDerHex(signature, includeHashType: true);
   }
 
   Future<List<String>> signNonceProofCandidates({
@@ -117,26 +116,26 @@ class DlcLocalSigner {
         Uint8List.fromList(key.sign(Uint8List.fromList(digest)) as List<int>);
 
     final signatures = <String>[
-      _toDerHex(
+      compactSecp256k1SignatureToDerHex(
         signDigest(accountKey, sha256.convert(utf8.encode(nonce)).bytes),
         includeHashType: true,
       ),
-      _toDerHex(
+      compactSecp256k1SignatureToDerHex(
         signDigest(accountKey, sha256.convert(utf8.encode(nonceHex)).bytes),
         includeHashType: true,
       ),
-      _toDerHex(
+      compactSecp256k1SignatureToDerHex(
         signDigest(
           accountKey,
           sha256.convert(sha256.convert(utf8.encode(nonce)).bytes).bytes,
         ),
         includeHashType: true,
       ),
-      _toDerHex(
+      compactSecp256k1SignatureToDerHex(
         signDigest(interactionKey, sha256.convert(utf8.encode(nonce)).bytes),
         includeHashType: true,
       ),
-      _toDerHex(
+      compactSecp256k1SignatureToDerHex(
         signDigest(interactionKey, sha256.convert(utf8.encode(nonceHex)).bytes),
         includeHashType: true,
       ),
@@ -192,7 +191,7 @@ class DlcLocalSigner {
       proofs.add({
         'txid': utxo.txId,
         'vout': utxo.vout,
-        'signature': _toDerHex(signature),
+        'signature': compactSecp256k1SignatureToDerHex(signature),
         'public_key': key.public.toHexString(),
       });
     }
@@ -223,21 +222,11 @@ class DlcLocalSigner {
     if (fundingPrivateKey == null || fundingPrivateKey.length != 32) {
       throw Exception('DLC funding key is missing or invalid.');
     }
-    final cetSigs = signCetAdaptorJobsFromCoordinatorContext(
-      cetSigningJobs: jobs,
-      fundingPrivateKey: Uint8List.fromList(fundingPrivateKey),
-    );
-
-    final refundSighashHex = context['refund_sighash_hex'] as String?;
-    final refundHash = refundSighashHex == null || refundSighashHex.isEmpty
-        ? sha256.convert(utf8.encode('$contextTag:refund')).bytes
-        : hex.decode(refundSighashHex);
-    final refundSignature = key.sign(Uint8List.fromList(refundHash));
 
     final fundingHashes =
         (context['funding_input_sighashes_hex'] as List<dynamic>? ?? const [])
             .cast<String>();
-    final witnessStacks = await _signFundingInputWitnessStacks(
+    final fundingInputKeys = await _resolveFundingInputSigningKeys(
       wallet: wallet,
       walletUtxos: walletUtxos,
       fundingInputSighashesHex: fundingHashes,
@@ -250,55 +239,36 @@ class DlcLocalSigner {
           .map((item) => item.toString())
           .toList(growable: false),
     );
-    final fundingSignaturesHex = witnessStacks.isEmpty
-        ? <String>[]
-        : [
-            serializeFundingSignatureHex(witnessStacks: witnessStacks),
-          ];
+
+    final signed = await runDlcContextSigningOffMainThread(
+      DlcContextSigningIsolateInput(
+        cetSigningJobs: jobs
+            .map((job) => Map<String, dynamic>.from(job as Map))
+            .toList(growable: false),
+        fundingPrivateKey: fundingPrivateKey,
+        contextTag: contextTag,
+        refundSighashHex: context['refund_sighash_hex'] as String?,
+        fundingInputSighashesHex: fundingHashes,
+        fundingInputKeys: fundingInputKeys
+            .map(
+              (k) => DlcFundingInputSigningMaterial(
+                privateKey: k.private!,
+                publicKey: k.public,
+              ),
+            )
+            .toList(growable: false),
+      ),
+    );
 
     return DlcSigningResult(
       fundingPubkeyHex: fundingPubkeyHex,
-      cetAdaptorSignaturesHex: cetSigs,
-      refundSignatureHex: Uint8List.fromList(refundSignature).toHexString(),
-      fundingSignaturesHex: fundingSignaturesHex,
+      cetAdaptorSignaturesHex: signed.cetAdaptorSignaturesHex,
+      refundSignatureHex: signed.refundSignatureHex,
+      fundingSignaturesHex: signed.fundingSignaturesHex,
     );
   }
 
   String fundingDerivationPath(Wallet wallet) => '${wallet.derivationPath}/0/0';
-
-  Future<List<Uint8List>> _signFundingInputWitnessStacks({
-    required Wallet wallet,
-    required List<WalletUtxo> walletUtxos,
-    required List<String> fundingInputSighashesHex,
-    required List<String> fundingInputAddresses,
-    required List<String> fundingInputOutpoints,
-  }) async {
-    if (fundingInputSighashesHex.isEmpty) return const [];
-
-    final signingKeys = await _resolveFundingInputSigningKeys(
-      wallet: wallet,
-      walletUtxos: walletUtxos,
-      fundingInputSighashesHex: fundingInputSighashesHex,
-      fundingInputAddresses: fundingInputAddresses,
-      fundingInputOutpoints: fundingInputOutpoints,
-    );
-
-    final witnessStacks = <Uint8List>[];
-    for (var i = 0; i < fundingInputSighashesHex.length; i++) {
-      final sighash = Uint8List.fromList(hex.decode(fundingInputSighashesHex[i]));
-      final inputKey = signingKeys[i];
-      final compactSig = Uint8List.fromList(
-        inputKey.sign(sighash) as List<int>,
-      );
-      witnessStacks.add(
-        encodeP2wpkhFundingWitnessStack(
-          derSignatureHex: _toDerHex(compactSig),
-          compressedPubkey33: Uint8List.fromList(inputKey.public),
-        ),
-      );
-    }
-    return witnessStacks;
-  }
 
   Future<List<Bip32Keys>> _resolveFundingInputSigningKeys({
     required Wallet wallet,
@@ -482,44 +452,4 @@ class DlcLocalSigner {
     return root.derivePath(wallet.derivationPath);
   }
 
-  String _toDerHex(Uint8List compactSignature, {bool includeHashType = false}) {
-    if (compactSignature.length != 64) {
-      throw Exception(
-        'Invalid compact signature length: ${compactSignature.length}',
-      );
-    }
-
-    final r = _trimLeadingZeros(compactSignature.sublist(0, 32));
-    final s = _trimLeadingZeros(compactSignature.sublist(32, 64));
-    final rDer = (r.isNotEmpty && (r.first & 0x80) != 0)
-        ? Uint8List.fromList([0, ...r])
-        : Uint8List.fromList(r);
-    final sDer = (s.isNotEmpty && (s.first & 0x80) != 0)
-        ? Uint8List.fromList([0, ...s])
-        : Uint8List.fromList(s);
-
-    final sequenceLen = 2 + rDer.length + 2 + sDer.length;
-    final der = Uint8List.fromList([
-      0x30,
-      sequenceLen,
-      0x02,
-      rDer.length,
-      ...rDer,
-      0x02,
-      sDer.length,
-      ...sDer,
-    ]);
-    final withHashType = includeHashType
-        ? Uint8List.fromList([...der, 0x01])
-        : der;
-    return withHashType.toHexString();
-  }
-
-  List<int> _trimLeadingZeros(List<int> bytes) {
-    var index = 0;
-    while (index < bytes.length - 1 && bytes[index] == 0) {
-      index++;
-    }
-    return bytes.sublist(index);
-  }
 }

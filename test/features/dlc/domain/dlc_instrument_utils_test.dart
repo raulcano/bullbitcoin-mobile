@@ -44,14 +44,23 @@ void main() {
     });
   });
 
+  group('dlcInstrumentDisplayId', () {
+    test('removes STRIKE placeholder from template ids', () {
+      expect(
+        dlcInstrumentDisplayId('BTC-18MAR26-STRIKE-C'),
+        'BTC-18MAR26-C',
+      );
+    });
+  });
+
   group('dlcInstrumentLabel', () {
-    test('includes oracle when present', () {
+    test('shows instrument id only without oracle', () {
       expect(
         dlcInstrumentLabel({
-          'instrument_id': 'BTC-A',
+          'instrument_id': 'BTC-18MAR26-STRIKE-C',
           'oracle_label': 'oracle_1',
         }),
-        'BTC-A · oracle_1',
+        'BTC-18MAR26-C',
       );
     });
 

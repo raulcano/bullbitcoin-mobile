@@ -561,4 +561,54 @@ void main() {
       );
     });
   });
+
+  group('dlcSellerCollateralSats', () {
+    test('buy order uses acceptor collateral not buyer premium', () {
+      expect(
+        dlcSellerCollateralSats(
+          json: {
+            'side': 'buy',
+            'buyer_collateral_sats': 50_300,
+            'acceptor_collateral_sats': 100_000_000,
+          },
+          side: 'buy',
+          quantity: 1,
+        ),
+        100_000_000,
+      );
+    });
+
+    test('sell order uses offerer collateral', () {
+      expect(
+        dlcSellerCollateralSats(
+          json: {
+            'side': 'sell',
+            'offerer_collateral_sats': 50_000_000,
+            'buyer_collateral_sats': 50_300,
+          },
+          side: 'sell',
+          quantity: 0.5,
+        ),
+        50_000_000,
+      );
+    });
+
+    test('derives from quantity when API omits collateral fields', () {
+      expect(
+        dlcSellerCollateralSats(side: 'buy', quantity: 2),
+        2 * dlcSatsPerOptionContract,
+      );
+    });
+
+    test('ignores buyer collateral when only buyer field is present', () {
+      expect(
+        dlcSellerCollateralSats(
+          json: {'buyer_collateral_sats': 50_300},
+          side: 'buy',
+          quantity: 1,
+        ),
+        dlcSatsPerOptionContract,
+      );
+    });
+  });
 }

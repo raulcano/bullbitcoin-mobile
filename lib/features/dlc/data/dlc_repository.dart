@@ -14,6 +14,7 @@ import 'package:bb_mobile/features/dlc/domain/dlc_local_signer.dart';
 import 'package:bb_mobile/features/dlc/domain/dlc_models.dart';
 import 'package:bb_mobile/features/dlc/domain/dlc_option_payout_simulation.dart';
 import 'package:bb_mobile/features/dlc/domain/dlc_negotiation_utils.dart';
+import 'package:bb_mobile/features/dlc/domain/dlc_order_utils.dart';
 import 'package:flutter/foundation.dart';
 
 class DlcRepository {
@@ -55,6 +56,10 @@ class DlcRepository {
 
   Future<List<DlcWalletAuth>> getAllWalletAuths() async {
     return _authStorage.getAll(await _environment());
+  }
+
+  Future<String?> getActiveWalletOriginId() async {
+    return _authStorage.getActiveWalletOriginId(await _environment());
   }
 
   Future<Map<String, dynamic>> getSystemReadiness() async {
@@ -1683,12 +1688,11 @@ class DlcRepository {
       price: o.price,
       createdAt: o.createdAt,
       sideCollateralSat:
-          _readNumber(d, [
-            'side_collateral_sats',
-            'side_collateral_sat',
-            'collateral_sats',
-            'collateral_sat',
-          ]) ??
+          dlcSellerCollateralSats(
+            json: d,
+            side: o.side,
+            quantity: o.quantity,
+          ) ??
           o.sideCollateralSat,
       partnerFeeSat:
           _readNumber(d, [
@@ -1778,7 +1782,11 @@ class DlcRepository {
       quantity: qty is num ? qty.toDouble() : null,
       price: price is num ? price.toDouble() : null,
       createdAt: DateTime.tryParse(json['created_at']?.toString() ?? ''),
-      sideCollateralSat: _readSideCollateral(json, side),
+      sideCollateralSat: dlcSellerCollateralSats(
+        json: json,
+        side: side,
+        quantity: qty is num ? qty.toDouble() : null,
+      ),
       partnerFeeSat: _readNumber(json, [
         'partner_fee_sats',
         'partner_fee_sat',
@@ -1800,33 +1808,6 @@ class DlcRepository {
       closingTxid: json['closing_txid'] as String?,
       refundTxid: json['refund_txid'] as String?,
     );
-  }
-
-  double? _readSideCollateral(Map<String, dynamic> json, String? side) {
-    final sideLower = side?.toLowerCase();
-    if (sideLower == 'buy') {
-      return _readNumber(json, [
-        'buyer_collateral_sats',
-        'buy_collateral_sats',
-        'long_collateral_sats',
-        'side_collateral_sats',
-        'collateral_sats',
-      ]);
-    }
-    if (sideLower == 'sell') {
-      return _readNumber(json, [
-        'seller_collateral_sats',
-        'sell_collateral_sats',
-        'short_collateral_sats',
-        'side_collateral_sats',
-        'collateral_sats',
-      ]);
-    }
-    return _readNumber(json, [
-      'side_collateral_sats',
-      'collateral_sats',
-      'collateral_sat',
-    ]);
   }
 
   double? _readNumber(Map<String, dynamic> json, List<String> keys) {

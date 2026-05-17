@@ -1,6 +1,7 @@
 import 'package:bb_mobile/core/utils/constants.dart';
 import 'package:bb_mobile/features/dlc/domain/dlc_instrument_utils.dart';
 import 'package:bb_mobile/features/dlc/domain/dlc_models.dart';
+import 'package:bb_mobile/features/dlc/domain/dlc_order_in_flight.dart';
 import 'package:bb_mobile/features/dlc/domain/dlc_order_utils.dart';
 import 'package:bb_mobile/features/dlc/domain/dlc_option_payout_simulation.dart';
 import 'package:bb_mobile/features/dlc/data/dlc_api_datasource.dart';
@@ -43,6 +44,7 @@ class _DlcHomeScreenState extends State<DlcHomeScreen> {
     final premSats = dlcOrderbookPremiumPerFullContractSatoshis(row);
 
     final cubit = context.read<DlcCubit>();
+    cubit.setCreateOrderMatchIntent(true);
     cubit.setSide(isAskRow ? DlcOrderSide.buy : DlcOrderSide.sell);
 
     final qtyText = _formatDecimalInput(qty);
@@ -101,7 +103,7 @@ class _DlcHomeScreenState extends State<DlcHomeScreen> {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      // Loads instruments and orderbook only; wallet registration is explicit.
+      // Loads coordinator catalog only; wallet session starts on Activate.
       context.read<DlcCubit>().load();
     });
   }
@@ -125,10 +127,10 @@ class _DlcHomeScreenState extends State<DlcHomeScreen> {
           state.selectedInstrumentId,
         );
         final openOrders = state.orders
-            .where(isDlcOpenOrder)
+            .where(orderShowsInOpenSection)
             .toList(growable: false);
         final liveOrders = state.orders
-            .where(isDlcLiveOrder)
+            .where(orderShowsInLiveSection)
             .toList(growable: false);
         final closedOrders = state.orders
             .where(isDlcClosedOrder)
@@ -136,7 +138,7 @@ class _DlcHomeScreenState extends State<DlcHomeScreen> {
         final tradingBlocked = _tradingBlocked(state);
 
         final showActionOverlay =
-            state.actionInProgress || state.processingOrder || _simulateLoading;
+            state.actionInProgress || _simulateLoading;
 
         return Scaffold(
           body: DlcActionLoadingOverlay(
@@ -146,10 +148,7 @@ class _DlcHomeScreenState extends State<DlcHomeScreen> {
                 children: [
                 _DlcHomeTopNav(
                   selectedIndex: state.selectedTabIndex,
-                  loading:
-                      state.loading ||
-                      state.processingOrder ||
-                      _simulateLoading,
+                  loading: state.loading || _simulateLoading,
                   onSelect: (idx) {
                     context.read<DlcCubit>().setTab(idx);
                     if (idx == 1) {
@@ -357,18 +356,13 @@ class _DlcHomeScreenState extends State<DlcHomeScreen> {
                                   ),
                                   const SizedBox(height: 8),
                                   ElevatedButton.icon(
-                                    onPressed:
-                                        state.loading ||
-                                            state.auth == null ||
-                                            tradingBlocked
+                                    onPressed: state.auth == null || tradingBlocked
                                         ? null
                                         : () => context
                                               .read<DlcCubit>()
                                               .createOrder(),
                                     icon: const Icon(Icons.add_chart),
-                                    label: state.loading
-                                        ? const Text('Creating...')
-                                        : const Text('Create'),
+                                    label: const Text('Create'),
                                   ),
                                 ],
                               ),
@@ -1438,7 +1432,7 @@ class _OverviewPanel extends StatelessWidget {
                   children: [
                     Icon(
                       state.auth == null
-                          ? Icons.person_add_alt_1_outlined
+                          ? Icons.account_balance_wallet_outlined
                           : Icons.verified_user_outlined,
                       size: 18,
                       color: Theme.of(context).colorScheme.primary,
@@ -1446,7 +1440,7 @@ class _OverviewPanel extends StatelessWidget {
                     const SizedBox(width: 6),
                     Text(
                       state.auth == null
-                          ? 'Wallet registration'
+                          ? 'Activate wallet'
                           : 'Wallet registered',
                       style: Theme.of(context).textTheme.titleMedium?.copyWith(
                         fontWeight: FontWeight.w600,
@@ -1457,7 +1451,8 @@ class _OverviewPanel extends StatelessWidget {
                 const SizedBox(height: 8),
                 if (state.auth == null) ...[
                   Text(
-                    'Register only if you want this wallet on the DLC coordinator. Nothing is sent until you tap the button.',
+                    'Choose a Bitcoin wallet and activate it for DLC. '
+                    'Balances, orders, and UTXO sync run after you tap Activate.',
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
                       color: Theme.of(context).colorScheme.onSurfaceVariant,
                     ),
@@ -1468,13 +1463,21 @@ class _OverviewPanel extends StatelessWidget {
                     isExpanded: true,
                     items: state.availableWallets
                         .map(
-                          (wallet) => DropdownMenuItem(
-                            value: wallet.walletOriginId,
-                            child: Text(wallet.label),
-                          ),
+                          (wallet) {
+                            final registered = state.registeredWalletAuths.any(
+                              (auth) =>
+                                  auth.walletOriginId == wallet.walletOriginId,
+                            );
+                            final suffix =
+                                registered ? 'registered' : 'not registered';
+                            return DropdownMenuItem(
+                              value: wallet.walletOriginId,
+                              child: Text('${wallet.label} ($suffix)'),
+                            );
+                          },
                         )
                         .toList(),
-                    onChanged: state.loading
+                    onChanged: state.loading || state.actionInProgress
                         ? null
                         : (value) {
                             if (value == null) return;
@@ -1483,18 +1486,21 @@ class _OverviewPanel extends StatelessWidget {
                             );
                           },
                     decoration: const InputDecoration(
-                      labelText: 'Bitcoin wallet to register',
+                      labelText: 'Bitcoin wallet for DLC',
                     ),
                   ),
                   const SizedBox(height: 8),
                   ElevatedButton.icon(
                     onPressed:
                         state.loading ||
+                            state.actionInProgress ||
                             state.selectedRegistrationWalletOriginId == null
                         ? null
-                        : () => context.read<DlcCubit>().registerWallet(),
-                    icon: const Icon(Icons.link),
-                    label: const Text('Register wallet'),
+                        : () => context.read<DlcCubit>().activateWalletForDlc(
+                            state.selectedRegistrationWalletOriginId!,
+                          ),
+                    icon: const Icon(Icons.play_circle_outline),
+                    label: const Text('Activate'),
                   ),
                 ] else ...[
                   InkWell(
@@ -1681,8 +1687,6 @@ class _OverviewPanel extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text('Label: ${auth.walletLabel}'),
-                  const SizedBox(height: 6),
-                  SelectableText('Wallet ID: ${auth.walletId}'),
                   if (auth.expiresAt != null) ...[
                     const SizedBox(height: 6),
                     Text(
@@ -1895,8 +1899,8 @@ class _CompactOrderEntry extends StatelessWidget {
                   runSpacing: 2,
                   children: [
                     _OrderMetric(
-                      label: 'Collateral',
-                      value: _formatOrderSats(order.sideCollateralSat),
+                      label: 'Seller collateral',
+                      value: dlcFormatOrderSellerCollateral(order),
                     ),
                     _OrderMetric(
                       label: 'Contracts',
@@ -1939,12 +1943,36 @@ class _CompactOrderEntry extends StatelessWidget {
               Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  IconButton(
-                    visualDensity: VisualDensity.compact,
-                    tooltip: 'Order info',
-                    onPressed: () => _showOrderInfoDialog(context, order),
-                    icon: const Icon(Icons.info_outline, size: 20),
-                  ),
+                  if (order.inFlightPhase != null) ...[
+                    IconButton(
+                      visualDensity: VisualDensity.compact,
+                      tooltip: 'In progress',
+                      onPressed: () =>
+                          _showOrderInFlightDialog(context, order),
+                      icon: Icon(
+                        Icons.hourglass_top,
+                        size: 20,
+                        color: dlcOrderInFlightHourglassColor(
+                          colorScheme,
+                          order.inFlightPhase!,
+                        ),
+                      ),
+                    ),
+                    if (dlcOrderShowsInfoDuringInFlight(order.inFlightPhase!))
+                      IconButton(
+                        visualDensity: VisualDensity.compact,
+                        tooltip: 'Order info',
+                        onPressed: () =>
+                            _showOrderInfoDialog(context, order),
+                        icon: const Icon(Icons.info_outline, size: 20),
+                      ),
+                  ] else
+                    IconButton(
+                      visualDensity: VisualDensity.compact,
+                      tooltip: 'Order info',
+                      onPressed: () => _showOrderInfoDialog(context, order),
+                      icon: const Icon(Icons.info_outline, size: 20),
+                    ),
                   if (showCancel)
                     IconButton(
                       visualDensity: VisualDensity.compact,
@@ -2008,6 +2036,27 @@ Future<void> _confirmCancelOrder(
   }
 }
 
+void _showOrderInFlightDialog(BuildContext context, DlcOrderSummary order) {
+  final phase = order.inFlightPhase;
+  if (phase == null) return;
+  showDialog<void>(
+    context: context,
+    builder: (dialogContext) => AlertDialog(
+      title: Text(dlcOrderInFlightDialogTitle(phase)),
+      content: Text(
+        dlcOrderInFlightDialogBody(phase: phase, order: order),
+        style: Theme.of(dialogContext).textTheme.bodyMedium,
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(dialogContext).pop(),
+          child: const Text('OK'),
+        ),
+      ],
+    ),
+  );
+}
+
 void _showOrderInfoDialog(BuildContext context, DlcOrderSummary order) {
   showDialog<void>(
     context: context,
@@ -2018,7 +2067,10 @@ void _showOrderInfoDialog(BuildContext context, DlcOrderSummary order) {
           mainAxisSize: MainAxisSize.min,
           children: [
             _InfoRow('Instrument', order.instrumentId ?? '-'),
-            _InfoRow('Collateral', _formatOrderSats(order.sideCollateralSat)),
+            _InfoRow(
+              'Seller collateral (sats)',
+              dlcFormatOrderSellerCollateral(order),
+            ),
             _InfoRow(
               'Contracts',
               order.quantity == null
@@ -2081,10 +2133,7 @@ bool _tradingBlocked(DlcState state) {
       hint.contains('reports regtest while this app environment is mainnet');
 }
 
-String _instrumentDisplayId(String? rawId) {
-  if (rawId == null || rawId.isEmpty) return '-';
-  return rawId.replaceAll('-STRIKE-', '-');
-}
+String _instrumentDisplayId(String? rawId) => dlcInstrumentDisplayId(rawId);
 
 String _formatUsdStrike(double strike) {
   final rounded = strike.round();
