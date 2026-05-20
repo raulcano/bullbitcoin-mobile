@@ -27,8 +27,11 @@ class DlcState {
   final int? totalBalanceSat;
   final int? availableBalanceSat;
   final int? reservedBalanceSat;
+  final int? walletPnlSats;
   final List<Map<String, dynamic>> orderbookBids;
   final List<Map<String, dynamic>> orderbookAsks;
+  final List<DlcStrikeOrderbookSnapshot> strikeOrderbooks;
+  final bool orderbookRefreshing;
   final List<DlcWalletOption> availableWallets;
   final String? selectedRegistrationWalletOriginId;
   final List<DlcExpiredWalletInfo> expiredWallets;
@@ -62,8 +65,11 @@ class DlcState {
     required this.totalBalanceSat,
     required this.availableBalanceSat,
     required this.reservedBalanceSat,
+    required this.walletPnlSats,
     required this.orderbookBids,
     required this.orderbookAsks,
+    required this.strikeOrderbooks,
+    required this.orderbookRefreshing,
     required this.availableWallets,
     required this.selectedRegistrationWalletOriginId,
     required this.expiredWallets,
@@ -96,8 +102,11 @@ class DlcState {
     totalBalanceSat: null,
     availableBalanceSat: null,
     reservedBalanceSat: null,
+    walletPnlSats: null,
     orderbookBids: [],
     orderbookAsks: [],
+    strikeOrderbooks: [],
+    orderbookRefreshing: false,
     availableWallets: [],
     selectedRegistrationWalletOriginId: null,
     expiredWallets: [],
@@ -137,8 +146,12 @@ class DlcState {
     int? totalBalanceSat,
     int? availableBalanceSat,
     int? reservedBalanceSat,
+    int? walletPnlSats,
+    bool clearWalletPnlSats = false,
     List<Map<String, dynamic>>? orderbookBids,
     List<Map<String, dynamic>>? orderbookAsks,
+    List<DlcStrikeOrderbookSnapshot>? strikeOrderbooks,
+    bool? orderbookRefreshing,
     List<DlcWalletOption>? availableWallets,
     String? selectedRegistrationWalletOriginId,
     bool clearSelectedRegistrationWallet = false,
@@ -181,8 +194,13 @@ class DlcState {
       totalBalanceSat: totalBalanceSat ?? this.totalBalanceSat,
       availableBalanceSat: availableBalanceSat ?? this.availableBalanceSat,
       reservedBalanceSat: reservedBalanceSat ?? this.reservedBalanceSat,
+      walletPnlSats: clearWalletPnlSats
+          ? null
+          : (walletPnlSats ?? this.walletPnlSats),
       orderbookBids: orderbookBids ?? this.orderbookBids,
       orderbookAsks: orderbookAsks ?? this.orderbookAsks,
+      strikeOrderbooks: strikeOrderbooks ?? this.strikeOrderbooks,
+      orderbookRefreshing: orderbookRefreshing ?? this.orderbookRefreshing,
       availableWallets: availableWallets ?? this.availableWallets,
       selectedRegistrationWalletOriginId: clearSelectedRegistrationWallet
           ? null

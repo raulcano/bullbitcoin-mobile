@@ -13,8 +13,11 @@ import 'package:bb_mobile/features/dlc/domain/dlc_instrument_utils.dart';
 import 'package:bb_mobile/features/dlc/domain/dlc_local_signer.dart';
 import 'package:bb_mobile/features/dlc/domain/dlc_models.dart';
 import 'package:bb_mobile/features/dlc/domain/dlc_option_payout_simulation.dart';
+import 'package:bb_mobile/features/dlc/domain/dlc_dlc_detail_sync_utils.dart';
 import 'package:bb_mobile/features/dlc/domain/dlc_negotiation_utils.dart';
 import 'package:bb_mobile/features/dlc/domain/dlc_order_utils.dart';
+import 'package:bb_mobile/features/dlc/domain/dlc_wallet_pnl_utils.dart';
+import 'package:bb_mobile/features/dlc/domain/dlc_wallet_utxo_projection_utils.dart';
 import 'package:flutter/foundation.dart';
 
 class DlcRepository {
@@ -44,6 +47,10 @@ class DlcRepository {
        _negotiationStorage = negotiationStorage,
        _localSigner = localSigner,
        _getWalletUtxosUsecase = getWalletUtxosUsecase;
+
+  final Map<String, _CachedDlcDetail> _dlcDetailCacheByKey = {};
+
+  void clearDlcDetailCache() => _dlcDetailCacheByKey.clear();
 
   Future<Environment> _environment() async =>
       (await _settingsRepository.fetch()).environment;
@@ -157,18 +164,46 @@ class DlcRepository {
     return dlcLiveInstruments(all);
   }
 
-  /// Calls `POST /orders/option-payout-simulation` with the active wallet token.
+  /// Mark-to-market (live) and settled PnL via coordinator simulation per position.
+  Future<int?> estimateWalletPnlSats({
+    required List<DlcOrderSummary> orders,
+    required double btcUsdSpotUsd,
+  }) async {
+    if (await getWalletAuth() == null) return null;
+    final spotOutcome = btcUsdSpotUsd.round();
+    var total = 0;
+    var counted = false;
+    for (final order in dlcOrdersForWalletPnlEstimate(orders)) {
+      final outcome = isDlcClosedOrder(order)
+          ? dlcOracleOutcomeUsd(order)
+          : spotOutcome;
+      if (outcome == null) continue;
+      final request = dlcOptionPayoutSimulationRequestForOrder(
+        order,
+        outcomePriceUsd: outcome,
+      );
+      if (request == null) continue;
+      try {
+        final result = await simulateOptionPayout(request);
+        total += result.roundedPnlSats;
+        counted = true;
+      } catch (e) {
+        debugPrint('DLC wallet PnL estimate skipped for ${order.orderId}: $e');
+      }
+    }
+    return counted ? total : 0;
+  }
+
+  /// Calls `POST /orders/option-payout-simulation`.
+  ///
+  /// Uses the active wallet token when registered; otherwise calls without
+  /// authorization so the simulate tab works before wallet activation.
   Future<DlcOptionPayoutSimulationResult> simulateOptionPayout(
     DlcOptionPayoutSimulationRequest request,
   ) async {
     final auth = await getWalletAuth();
-    if (auth == null) {
-      throw Exception(
-        'Register your wallet on the DLC coordinator to run simulations.',
-      );
-    }
     final raw = await _datasource.simulateOptionPayout(
-      token: auth.walletToken,
+      token: auth?.walletToken,
       payload: request.toJson(),
     );
     return DlcOptionPayoutSimulationResult.fromJson(raw);
@@ -287,6 +322,21 @@ class DlcRepository {
     }
   }
 
+  /// Reconciles coordinator-visible UTXOs after funding or settlement broadcast
+  /// projection (best-effort on the coordinator; wallet chain view is source of truth).
+  Future<DlcWalletSyncResult?> syncActiveWalletUtxosAfterCoordinatorProjection({
+    required List<DlcOrderSummary> currentOrders,
+    required List<DlcOrderSummary> previousOrders,
+  }) async {
+    if (!dlcOrdersRequireUtxoSyncAfterProjection(
+      current: currentOrders,
+      previous: previousOrders,
+    )) {
+      return null;
+    }
+    return _trySyncActiveWalletUtxos();
+  }
+
   Future<void> setActiveWalletOriginId(String walletOriginId) async {
     final env = await _environment();
     await _authStorage.setActiveWalletOriginId(env, walletOriginId);
@@ -309,11 +359,13 @@ class DlcRepository {
       final order = _mapOrder(
         _mergeCoordinatorOrderJson(remote: json, local: local),
       );
-      return _mergeOrderWithDlcSnapshot(
+      return _enrichOrderWithDlcIfNeeded(
         token: auth.walletToken,
         environment: env,
         auth: auth,
         order: order,
+        coordinatorJson: json,
+        forceRefresh: true,
       );
     } catch (e) {
       if (isCoordinatorResourceNotFound(e)) {
@@ -335,7 +387,7 @@ class DlcRepository {
     if (auth == null) return DlcNegotiationPassResult.skipped();
 
     final env = await _environment();
-    var orders = await listOrders();
+    var orders = await listOrders(fetchDlcDetails: false);
     final List<DlcOrderSummary> targets;
     try {
       final resolved = await _resolveNegotiationTargets(
@@ -411,11 +463,11 @@ class DlcRepository {
 
   /// Whether any loaded order still needs an automated negotiation pass.
   Future<bool> hasOrdersNeedingNegotiation() async {
-    final orders = await listOrders();
+    final orders = await listOrders(fetchDlcDetails: false);
     return orders.any(needsDlcNegotiation);
   }
 
-  Future<List<DlcOrderSummary>> listOrders() async {
+  Future<List<DlcOrderSummary>> listOrders({bool fetchDlcDetails = true}) async {
     final auth = await getWalletAuth();
     if (auth == null) return [];
     final env = await _environment();
@@ -429,8 +481,8 @@ class DlcRepository {
           snapshot['order_id'].toString(): snapshot,
     };
     final payload = await _datasource.listOrders(token: auth.walletToken);
-    final mapped = payload
-        .whereType<Map<String, dynamic>>()
+    final remoteRows = payload.whereType<Map<String, dynamic>>().toList();
+    final mapped = remoteRows
         .map(
           (json) => _mapOrder(
             _mergeCoordinatorOrderJson(
@@ -440,16 +492,19 @@ class DlcRepository {
           ),
         )
         .toList(growable: false);
-    final merged = await Future.wait(
-      mapped.map(
-        (o) => _mergeOrderWithDlcSnapshot(
-          token: auth.walletToken,
-          environment: env,
-          auth: auth,
-          order: o,
-        ),
-      ),
-    );
+    final merged = fetchDlcDetails
+        ? await Future.wait(
+            List.generate(mapped.length, (index) {
+              return _enrichOrderWithDlcIfNeeded(
+                token: auth.walletToken,
+                environment: env,
+                auth: auth,
+                order: mapped[index],
+                coordinatorJson: remoteRows[index],
+              );
+            }),
+          )
+        : mapped;
     for (final json in payload.whereType<Map<String, dynamic>>()) {
       await _persistOrderSnapshot(environment: env, auth: auth, values: json);
     }
@@ -558,9 +613,9 @@ class DlcRepository {
       'funding_pubkey_hex': funding.pubkeyHex,
     };
     try {
-      final payload = await _createOrderWithSingleTransientRetry(
+      final payload = await _createWithStaleBalanceRecovery(
         token: auth.walletToken,
-        payload: request,
+        request: request,
       );
       final order = await _finalizeCreatedOrder(
         environment: env,
@@ -578,15 +633,25 @@ class DlcRepository {
         syncBefore: syncBefore,
       );
     } catch (e) {
-      final reconciled = await _tryReconcileCreatedOrder(
-        environment: env,
-        auth: auth,
-        draft: draft,
-        draftFingerprint: draftFingerprint,
-        funding: funding,
-        idempotencyKey: idempotencyKey,
-        error: e,
-      );
+      // Reconcile is best-effort: any failure here must not replace the
+      // original create error, otherwise the user sees a misleading message
+      // (e.g. "Exception: DLC API request failed" from a follow-up listOrders
+      // network failure) while their order may actually be live.
+      DlcOrderSummary? reconciled;
+      try {
+        reconciled = await _tryReconcileCreatedOrder(
+          environment: env,
+          auth: auth,
+          draft: draft,
+          draftFingerprint: draftFingerprint,
+          funding: funding,
+          idempotencyKey: idempotencyKey,
+          error: e,
+        );
+      } catch (reconcileError) {
+        debugPrint('DLC create order reconcile failed: $reconcileError');
+        reconciled = null;
+      }
       if (reconciled != null) {
         await _trySyncActiveWalletUtxos();
         return DlcCreateOrderResult(
@@ -617,6 +682,53 @@ class DlcRepository {
       if (!_isTransientCoordinatorFailure(e)) rethrow;
       return _datasource.createOrder(token: token, payload: payload);
     }
+  }
+
+  /// Wraps the create POST with a single retry that first re-syncs the
+  /// wallet's UTXO set with the coordinator. The coordinator's reserved
+  /// balance can lag briefly after a match (the freshly matched order's
+  /// funding inputs stay reserved until projection), causing a spurious
+  /// `insufficient available balance` rejection when the wallet itself has
+  /// enough funds. Re-syncing pushes the latest UTXOs / proofs and gives the
+  /// coordinator a chance to re-evaluate before we surface the error.
+  Future<Map<String, dynamic>> _createWithStaleBalanceRecovery({
+    required String token,
+    required Map<String, dynamic> request,
+  }) async {
+    try {
+      return await _createOrderWithSingleTransientRetry(
+        token: token,
+        payload: request,
+      );
+    } catch (e) {
+      if (!_isInsufficientCoordinatorBalanceError(e)) rethrow;
+      debugPrint(
+        'DLC create rejected with insufficient balance; re-syncing UTXOs and retrying once.',
+      );
+      try {
+        await syncActiveWalletUtxos();
+      } catch (syncError) {
+        debugPrint(
+          'DLC create: resync after insufficient balance failed: $syncError',
+        );
+        rethrow;
+      }
+      // Brief settle window so the coordinator's reservation bookkeeping
+      // catches up with the fresh UTXO snapshot we just pushed.
+      await Future<void>.delayed(const Duration(milliseconds: 1500));
+      return _datasource.createOrder(token: token, payload: request);
+    }
+  }
+
+  /// Coordinator-reported insufficient-balance signature (404/422-style with
+  /// the matching message). Used to drive a single auto-recovery retry.
+  bool _isInsufficientCoordinatorBalanceError(Object e) {
+    final text = (e is DlcApiException ? e.message : e.toString())
+        .toLowerCase();
+    return text.contains('insufficient available balance') ||
+        text.contains('insufficient balance') ||
+        text.contains('not enough balance') ||
+        text.contains('not enough available balance');
   }
 
   Future<DlcOrderSummary> _finalizeCreatedOrder({
@@ -667,6 +779,55 @@ class DlcRepository {
       'wallet_id': walletId,
       'partner_id': ApiServiceConstants.dlcCoordinatorPartnerId,
     };
+  }
+
+  /// Best-effort lookup of an order that may have been created on the
+  /// coordinator after a transient client-side failure (timeout, dropped
+  /// connection, secondary reconcile error). Resolves the same idempotency
+  /// key the original create would have used so we find the exact order
+  /// without relying on fuzzy draft matching. Network errors are swallowed
+  /// — callers should treat null as "unknown" and rely on background polling.
+  Future<DlcOrderSummary?> tryReconcileCreatedOrderByDraft(
+    DlcOrderDraft draft,
+  ) async {
+    try {
+      final auth = await getWalletAuth();
+      if (auth == null) return null;
+      final env = await _environment();
+      final wallet = await _localSigner.getBitcoinWalletByOriginId(
+        environment: env,
+        walletOriginId: auth.walletOriginId,
+      );
+      final funding = draft.fundingPubkeyHex.isEmpty
+          ? await _localSigner.deriveFundingPubkey(wallet: wallet)
+          : DlcFundingPubkey(
+              pubkeyHex: draft.fundingPubkeyHex,
+              derivationPath: _localSigner.fundingDerivationPath(wallet),
+            );
+      final resolvedInstrumentId = _resolveCreateInstrumentId(draft);
+      final draftFingerprint =
+          '$resolvedInstrumentId|${draft.side.value}|${draft.quantity}|${draft.strikePrice}|${funding.pubkeyHex}';
+      final idempotencyKey =
+          await _idempotencyStorage.getOrCreateCreateDraftKey(
+        environment: env,
+        draftFingerprint: draftFingerprint,
+      );
+      final reconciled = await _reconcileCreateConflict(
+        environment: env,
+        auth: auth,
+        idempotencyKey: idempotencyKey,
+      );
+      if (reconciled != null) {
+        await _idempotencyStorage.clearCreateDraftKey(
+          environment: env,
+          draftFingerprint: draftFingerprint,
+        );
+      }
+      return reconciled;
+    } catch (e) {
+      debugPrint('DLC reconcile-by-draft failed: $e');
+      return null;
+    }
   }
 
   Future<DlcOrderSummary?> _tryReconcileCreatedOrder({
@@ -1049,11 +1210,13 @@ class DlcRepository {
         values: merged,
       );
       final mapped = _mapOrder(merged);
-      return _mergeOrderWithDlcSnapshot(
+      return _enrichOrderWithDlcIfNeeded(
         token: auth.walletToken,
         environment: environment,
         auth: auth,
         order: mapped,
+        coordinatorJson: merged,
+        forceRefresh: true,
       );
     } catch (e) {
       if (isCoordinatorResourceNotFound(e)) {
@@ -1275,6 +1438,15 @@ class DlcRepository {
           orderId: orderId,
           contextFingerprint: fingerprint,
         );
+        if (auth != null) {
+          final acceptedDlcId = accepted['dlc_id']?.toString();
+          if (acceptedDlcId != null && acceptedDlcId.isNotEmpty) {
+            _invalidateDlcDetailCache(
+              walletId: auth.walletId,
+              dlcId: acceptedDlcId,
+            );
+          }
+        }
         return;
       } catch (e) {
         if (_isContextMismatch(e) && attempt == 0) {
@@ -1404,6 +1576,7 @@ class DlcRepository {
           dlcId: dlcId,
           contextFingerprint: fingerprint,
         );
+        _invalidateDlcDetailCache(walletId: auth?.walletId, dlcId: dlcId);
         final fundingTxid = signedResponse['funding_txid'] as String?;
         if (fundingTxid != null && fundingTxid.isNotEmpty) {
           await _trySyncActiveWalletUtxos();
@@ -1439,30 +1612,129 @@ class DlcRepository {
         m.contains('stale_accept_context');
   }
 
-  Future<DlcOrderSummary> _mergeOrderWithDlcSnapshot({
+  String _dlcDetailCacheKey(DlcWalletAuth auth, String dlcId) =>
+      '${auth.walletId}:$dlcId';
+
+  void _invalidateDlcDetailCache({String? walletId, String? dlcId}) {
+    if (walletId == null && dlcId == null) {
+      _dlcDetailCacheByKey.clear();
+      return;
+    }
+    final keysToRemove = _dlcDetailCacheByKey.keys.where((key) {
+      final colon = key.indexOf(':');
+      if (colon <= 0) return false;
+      final keyWalletId = key.substring(0, colon);
+      final keyDlcId = key.substring(colon + 1);
+      if (walletId != null && keyWalletId != walletId) return false;
+      if (dlcId != null && keyDlcId != dlcId) return false;
+      return true;
+    }).toList(growable: false);
+    for (final key in keysToRemove) {
+      _dlcDetailCacheByKey.remove(key);
+    }
+  }
+
+  Future<DlcOrderSummary> _enrichOrderWithDlcIfNeeded({
     required String token,
     required Environment environment,
     required DlcWalletAuth auth,
     required DlcOrderSummary order,
+    Map<String, dynamic>? coordinatorJson,
+    bool forceRefresh = false,
   }) async {
-    if (order.dlcId == null) return order;
-    try {
-      final detail = await _datasource.getDlc(
-        token: token,
-        dlcId: order.dlcId!,
+    final dlcId = order.dlcId;
+    if (dlcId == null || dlcId.isEmpty) return order;
+
+    final cacheKey = _dlcDetailCacheKey(auth, dlcId);
+
+    if (!forceRefresh &&
+        coordinatorJson != null &&
+        coordinatorOrderJsonSkipsDlcDetailFetch(coordinatorJson) &&
+        !orderShouldFetchDlcDetail(order, forceRefresh: false)) {
+      return _mergeOrderWithCachedDlcDetail(
+        list: order,
+        cacheKey: cacheKey,
+        auth: auth,
+        dlcId: dlcId,
       );
-      return _mergeDlcDetailIntoOrder(order, detail);
+    }
+
+    if (!orderShouldFetchDlcDetail(order, forceRefresh: forceRefresh)) {
+      return _mergeOrderWithCachedDlcDetail(
+        list: order,
+        cacheKey: cacheKey,
+        auth: auth,
+        dlcId: dlcId,
+      );
+    }
+
+    if (!forceRefresh) {
+      final cached = _dlcDetailCacheByKey[cacheKey];
+      if (cached != null && _isDlcDetailCacheUsable(order: order, cached: cached)) {
+        return mergeListOrderWithDlcEnrichment(
+          list: order,
+          enriched: cached.order,
+        );
+      }
+      if (cached != null) {
+        _invalidateDlcDetailCache(walletId: auth.walletId, dlcId: dlcId);
+      }
+    }
+
+    try {
+      final detail = await _datasource.getDlc(token: token, dlcId: dlcId);
+      final enriched = _mergeDlcDetailIntoOrder(order, detail);
+      _dlcDetailCacheByKey[cacheKey] = _CachedDlcDetail(
+        order: enriched,
+        fetchedAt: DateTime.now().toUtc(),
+        detailUpdatedAt: detail['updated_at']?.toString(),
+      );
+      return enriched;
     } catch (e) {
       if (isCoordinatorResourceNotFound(e)) {
+        _invalidateDlcDetailCache(walletId: auth.walletId, dlcId: dlcId);
         await _purgeLocalCoordinatorSnapshot(
           environment: environment,
           auth: auth,
           orderId: order.orderId,
-          dlcId: order.dlcId,
+          dlcId: dlcId,
         );
       }
-      return order;
+      return _mergeOrderWithCachedDlcDetail(
+        list: order,
+        cacheKey: cacheKey,
+        auth: auth,
+        dlcId: dlcId,
+      );
     }
+  }
+
+  DlcOrderSummary _mergeOrderWithCachedDlcDetail({
+    required DlcOrderSummary list,
+    required String cacheKey,
+    required DlcWalletAuth auth,
+    required String dlcId,
+  }) {
+    final cached = _dlcDetailCacheByKey[cacheKey];
+    if (cached == null) return list;
+    if (listDlcSnapshotAheadOfCached(list: list, cached: cached.order)) {
+      _invalidateDlcDetailCache(walletId: auth.walletId, dlcId: dlcId);
+    }
+    return mergeListOrderWithDlcEnrichment(list: list, enriched: cached.order);
+  }
+
+  bool _isDlcDetailCacheUsable({
+    required DlcOrderSummary order,
+    required _CachedDlcDetail cached,
+  }) {
+    if (listDlcSnapshotAheadOfCached(list: order, cached: cached.order)) {
+      return false;
+    }
+    return isDlcDetailCacheFresh(
+      fetchedAt: cached.fetchedAt,
+      order: order,
+      detailUpdatedAt: cached.detailUpdatedAt,
+    );
   }
 
   Future<void> _persistOrderSnapshot({
@@ -1541,6 +1813,7 @@ class DlcRepository {
     String? orderId,
     String? dlcId,
   }) async {
+    _invalidateDlcDetailCache(walletId: auth.walletId, dlcId: dlcId);
     final resolvedOrderId = orderId ??
         (dlcId == null
             ? null
@@ -1834,4 +2107,16 @@ class DlcRepository {
     final strike = dlcNormalizeStrikeToken(strikePrice);
     return templateId.replaceFirst('-STRIKE-', '-$strike-');
   }
+}
+
+class _CachedDlcDetail {
+  const _CachedDlcDetail({
+    required this.order,
+    required this.fetchedAt,
+    this.detailUpdatedAt,
+  });
+
+  final DlcOrderSummary order;
+  final DateTime fetchedAt;
+  final String? detailUpdatedAt;
 }

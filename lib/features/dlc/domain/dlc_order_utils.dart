@@ -22,6 +22,42 @@ double? dlcParseOrderbookRowQuantity(Map<String, dynamic> row) {
   return double.tryParse(qtyRaw?.toString().trim() ?? '');
 }
 
+DlcStrikeOrderbookSnapshot dlcBuildStrikeOrderbookSnapshot({
+  required double strikePrice,
+  required List<Map<String, dynamic>> bids,
+  required List<Map<String, dynamic>> asks,
+}) {
+  return DlcStrikeOrderbookSnapshot(
+    strikePrice: strikePrice,
+    bids: bids,
+    asks: asks,
+    lowestAskPremiumSats: dlcOrderbookLowestAskPremiumSats(asks),
+    highestBidPremiumSats: dlcOrderbookHighestBidPremiumSats(bids),
+  );
+}
+
+/// Lowest per-contract premium on the ask side (best ask for a buyer).
+int? dlcOrderbookLowestAskPremiumSats(List<Map<String, dynamic>> asks) {
+  int? lowest;
+  for (final row in asks) {
+    final premium = dlcOrderbookPremiumPerFullContractSatoshis(row);
+    if (premium == null) continue;
+    if (lowest == null || premium < lowest) lowest = premium;
+  }
+  return lowest;
+}
+
+/// Highest per-contract premium on the bid side (best bid for a seller).
+int? dlcOrderbookHighestBidPremiumSats(List<Map<String, dynamic>> bids) {
+  int? highest;
+  for (final row in bids) {
+    final premium = dlcOrderbookPremiumPerFullContractSatoshis(row);
+    if (premium == null) continue;
+    if (highest == null || premium > highest) highest = premium;
+  }
+  return highest;
+}
+
 /// Orderbook row: [price] is premium for the row's aggregated [quantity];
 /// returns premium for **one full contract** (same unit as Create order premium).
 int? dlcOrderbookPremiumPerFullContractSatoshis(Map<String, dynamic> row) {

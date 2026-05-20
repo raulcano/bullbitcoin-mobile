@@ -76,6 +76,34 @@ void main() {
       expect(resolveOrderInFlightPhase(order), isNull);
       expect(orderShowsInOpenSection(order), isFalse);
     });
+
+    test('maker filled awaiting taker is not counted as open', () {
+      final order = _order(
+        status: 'filled',
+        isMaker: true,
+        matchRole: 'maker',
+        dlcStatus: 'accepted',
+      );
+      expect(orderShowsInLiveSection(order), isTrue);
+      expect(orderShowsInOpenSection(order), isFalse);
+      expect(dlcOpenOrdersCount([order]), 0);
+      expect(dlcLiveOrdersCount([order]), 1);
+    });
+
+    test('dlcOpenOrdersCount matches open section only', () {
+      final open = _order(
+        orderId: '${dlcLocalPendingOrderIdPrefix}2',
+        status: 'open',
+        inFlightPhase: DlcOrderInFlightPhase.creatingOnCoordinator,
+      );
+      final live = _order(
+        status: 'pending_accept',
+        pendingMatchAccept: true,
+        inFlightPhase: DlcOrderInFlightPhase.takerSigningAccept,
+      );
+      expect(dlcOpenOrdersCount([open, live]), 1);
+      expect(dlcLiveOrdersCount([open, live]), 1);
+    });
   });
 
   group('resolveOrderInFlightPhase', () {

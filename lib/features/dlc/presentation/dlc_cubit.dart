@@ -5,8 +5,12 @@ import 'package:bb_mobile/core/utils/constants.dart';
 import 'package:bb_mobile/features/dlc/data/dlc_repository.dart';
 import 'package:bb_mobile/features/dlc/domain/dlc_instrument_utils.dart';
 import 'package:bb_mobile/features/dlc/domain/dlc_models.dart';
+import 'package:bb_mobile/features/dlc/domain/dlc_dlc_detail_sync_utils.dart';
 import 'package:bb_mobile/features/dlc/domain/dlc_negotiation_utils.dart';
 import 'package:bb_mobile/features/dlc/domain/dlc_order_in_flight.dart';
+import 'package:bb_mobile/features/dlc/domain/dlc_order_utils.dart';
+import 'package:bb_mobile/features/dlc/domain/dlc_system_readiness.dart';
+import 'package:bb_mobile/features/dlc/domain/dlc_wallet_pnl_utils.dart';
 import 'package:bb_mobile/features/dlc/domain/dlc_wallet_sync_utils.dart';
 import 'package:bb_mobile/features/dlc/presentation/dlc_state.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -17,9 +21,52 @@ class DlcCubit extends Cubit<DlcState> {
   bool _pollInFlight = false;
   bool _negotiationInFlight = false;
 
+  /// Bumped on wallet activate/switch so in-flight async work cannot apply stale orders.
+  int _walletSessionGeneration = 0;
+
   DlcCubit({required DlcRepository repository})
     : _repository = repository,
       super(DlcState.initial());
+
+  void _beginWalletSessionTransition() {
+    _walletSessionGeneration++;
+    _backgroundPollTimer?.cancel();
+    _backgroundPollTimer = null;
+  }
+
+  /// True when a newer wallet activate/switch superseded this async work.
+  bool _isStaleWalletSessionGeneration(int session) {
+    if (isClosed) return true;
+    return session != _walletSessionGeneration;
+  }
+
+  /// Generation + active auth must match (safe only after commit has emitted).
+  bool _isStaleWalletSessionForWallet(int session, String walletOriginId) {
+    if (_isStaleWalletSessionGeneration(session)) return true;
+    return state.auth?.walletOriginId != walletOriginId;
+  }
+
+  Future<int?> _resolveWalletPnlSats({
+    required Map<String, dynamic>? balances,
+    required List<DlcOrderSummary> orders,
+    double? btcUsdSpotPrice,
+  }) async {
+    final fromCoordinator = dlcWalletPnlSatsFromCoordinatorPayload(balances);
+    if (fromCoordinator != null) return fromCoordinator;
+    if (orders.isEmpty) return 0;
+    double? spot = btcUsdSpotPrice;
+    if (spot == null) {
+      try {
+        spot = await _repository.getBtcUsdSpotPrice();
+      } catch (_) {
+        return null;
+      }
+    }
+    return _repository.estimateWalletPnlSats(
+      orders: orders,
+      btcUsdSpotUsd: spot,
+    );
+  }
 
   Future<void> load() async {
     if (state.auth != null) {
@@ -28,6 +75,107 @@ class DlcCubit extends Cubit<DlcState> {
     }
     await _loadCatalog();
   }
+
+  /// Clears the global info/error banners (tab change, dismiss, refresh).
+  void clearTransientMessages() {
+    if (state.infoMessage == null && state.errorMessage == null) return;
+    emit(state.copyWith(clearInfo: true, clearError: true));
+  }
+
+  /// Pull-to-refresh: only reload data relevant to the visible tab.
+  Future<void> refreshCurrentTab() async {
+    clearTransientMessages();
+    switch (state.selectedTabIndex) {
+      case 1:
+        return refreshOrderbookTab();
+      case 2:
+        return refreshOrdersTab();
+      case 3:
+        return refreshSimulateTab();
+      case 0:
+      default:
+        return refreshOverviewTab();
+    }
+  }
+
+  /// Overview: wallet UTXO sync and balances (orders refresh only if sync cancels them).
+  Future<void> refreshOverviewTab() async {
+    if (state.auth == null) {
+      await _loadCatalog();
+      return;
+    }
+    try {
+      var orders = state.orders;
+      String? utxoSyncInfo;
+      Map<String, dynamic>? balances;
+      try {
+        final sync = await _repository.syncActiveWalletUtxos();
+        balances = {
+          'total_balance': sync.totalBalanceSat,
+          'available_balance': sync.availableBalanceSat,
+          'reserved_balance': sync.reservedBalanceSat,
+        };
+        utxoSyncInfo = formatDlcWalletSyncInfoMessage(sync);
+        if (sync.hasCancelledOrders) {
+          orders = await _ordersFromCoordinatorPreservingLocal();
+        }
+      } catch (e) {
+        balances = await _repository.getWalletBalances();
+        utxoSyncInfo = 'Could not sync wallet UTXOs with the coordinator: $e';
+      }
+      if (isClosed) return;
+      final walletPnlSats = await _resolveWalletPnlSats(
+        balances: balances,
+        orders: orders,
+        btcUsdSpotPrice: state.btcUsdSpotPrice,
+      );
+      if (isClosed) return;
+      emit(
+        state.copyWith(
+          orders: orders,
+          totalBalanceSat: (balances?['total_balance'] as num?)?.toInt(),
+          availableBalanceSat: (balances?['available_balance'] as num?)?.toInt(),
+          reservedBalanceSat: (balances?['reserved_balance'] as num?)?.toInt(),
+          walletPnlSats: walletPnlSats,
+          infoMessage: utxoSyncInfo,
+          clearInfo: utxoSyncInfo == null,
+          clearError: true,
+        ),
+      );
+      _configureBackgroundPolling(orders);
+    } catch (e) {
+      if (!isClosed) {
+        emit(state.copyWith(errorMessage: 'Failed to refresh wallet: $e'));
+      }
+    }
+  }
+
+  /// My orders: coordinator order list and in-flight phases only.
+  Future<void> refreshOrdersTab() async {
+    if (state.auth == null) return;
+    try {
+      final orders = await _ordersFromCoordinatorPreservingLocal();
+      if (isClosed) return;
+      emit(
+        state.copyWith(
+          orders: orders,
+          clearInfo: true,
+          clearError: true,
+        ),
+      );
+      _configureBackgroundPolling(orders);
+      if (await _repository.hasOrdersNeedingNegotiation()) {
+        unawaited(_runNegotiationWorker(showProcessing: false));
+      }
+    } catch (e) {
+      if (!isClosed) {
+        emit(state.copyWith(errorMessage: 'Failed to refresh orders: $e'));
+      }
+    }
+  }
+
+  /// Simulate tab has no server-backed list to refresh.
+  Future<void> refreshSimulateTab() async {}
 
   /// Coordinator catalog and wallet picker only — no active wallet session or UTXO sync.
   Future<void> _loadCatalog() async {
@@ -62,13 +210,16 @@ class DlcCubit extends Cubit<DlcState> {
         current: state.strikePrice,
         suggestions: strikes.suggestions,
       );
-      final orderbookInstrument = _orderbookInstrumentId(
-        selectedInstrument,
+      final strikeOrderbooks = selectedInstrument == null
+          ? <DlcStrikeOrderbookSnapshot>[]
+          : await _fetchStrikeOrderbooks(
+              instrumentId: selectedInstrument,
+              strikePrices: strikes.suggestions,
+            );
+      final legacyBooks = _legacyBooksForStrike(
+        strikeOrderbooks,
         selectedStrike,
       );
-      final orderbook = orderbookInstrument == null
-          ? <String, dynamic>{}
-          : await _repository.getOrderbook(orderbookInstrument);
       final defaultWalletOriginId =
           lastActiveOriginId ??
           state.selectedRegistrationWalletOriginId ??
@@ -90,12 +241,10 @@ class DlcCubit extends Cubit<DlcState> {
           totalBalanceSat: null,
           availableBalanceSat: null,
           reservedBalanceSat: null,
-          orderbookBids: (orderbook['bids'] as List<dynamic>? ?? const [])
-              .whereType<Map<String, dynamic>>()
-              .toList(),
-          orderbookAsks: (orderbook['asks'] as List<dynamic>? ?? const [])
-              .whereType<Map<String, dynamic>>()
-              .toList(),
+          orderbookBids: legacyBooks.bids,
+          orderbookAsks: legacyBooks.asks,
+          strikeOrderbooks: strikeOrderbooks,
+          orderbookRefreshing: false,
           suggestedStrikePrices: strikes.suggestions,
           availableWallets: wallets,
           selectedRegistrationWalletOriginId: defaultWalletOriginId,
@@ -110,6 +259,7 @@ class DlcCubit extends Cubit<DlcState> {
       emit(
         state.copyWith(
           loading: false,
+          orderbookRefreshing: false,
           errorMessage: 'Failed to load DLC data: $e',
         ),
       );
@@ -176,13 +326,22 @@ class DlcCubit extends Cubit<DlcState> {
         current: state.strikePrice,
         suggestions: strikes.suggestions,
       );
-      final orderbookInstrument = _orderbookInstrumentId(
-        selectedInstrument,
+      final strikeOrderbooks = selectedInstrument == null
+          ? <DlcStrikeOrderbookSnapshot>[]
+          : await _fetchStrikeOrderbooks(
+              instrumentId: selectedInstrument,
+              strikePrices: strikes.suggestions,
+            );
+      final legacyBooks = _legacyBooksForStrike(
+        strikeOrderbooks,
         selectedStrike,
       );
-      final orderbook = orderbookInstrument == null
-          ? <String, dynamic>{}
-          : await _repository.getOrderbook(orderbookInstrument);
+      final walletPnlSats = await _resolveWalletPnlSats(
+        balances: balances,
+        orders: orders,
+        btcUsdSpotPrice: strikes.spotPrice,
+      );
+      if (isClosed) return;
       emit(
         state.copyWith(
           loading: false,
@@ -195,12 +354,11 @@ class DlcCubit extends Cubit<DlcState> {
           availableBalanceSat: (balances?['available_balance'] as num?)
               ?.toInt(),
           reservedBalanceSat: (balances?['reserved_balance'] as num?)?.toInt(),
-          orderbookBids: (orderbook['bids'] as List<dynamic>? ?? const [])
-              .whereType<Map<String, dynamic>>()
-              .toList(),
-          orderbookAsks: (orderbook['asks'] as List<dynamic>? ?? const [])
-              .whereType<Map<String, dynamic>>()
-              .toList(),
+          walletPnlSats: walletPnlSats,
+          orderbookBids: legacyBooks.bids,
+          orderbookAsks: legacyBooks.asks,
+          strikeOrderbooks: strikeOrderbooks,
+          orderbookRefreshing: false,
           suggestedStrikePrices: strikes.suggestions,
           strikePrice: selectedStrike,
           btcUsdSpotPrice: strikes.spotPrice,
@@ -260,6 +418,7 @@ class DlcCubit extends Cubit<DlcState> {
   }
 
   Future<void> switchActiveWallet(String walletOriginId) async {
+    _beginWalletSessionTransition();
     emit(
       state.copyWith(
         actionInProgress: true,
@@ -284,6 +443,7 @@ class DlcCubit extends Cubit<DlcState> {
   }
 
   Future<void> activateWalletForDlc(String walletOriginId) async {
+    _beginWalletSessionTransition();
     emit(
       state.copyWith(
         actionInProgress: true,
@@ -318,12 +478,20 @@ class DlcCubit extends Cubit<DlcState> {
 
   /// Applies the new active wallet without reloading instruments, readiness, or UTXOs.
   Future<void> _commitActiveWalletSession({required String infoMessage}) async {
+    final session = _walletSessionGeneration;
+    _repository.clearDlcDetailCache();
     final validation = await _repository.validateAndLoadWalletAuths();
     final auth = validation.activeAuth;
     final registeredWalletAuths = await _repository.getAllWalletAuths();
     final orders = auth == null
         ? <DlcOrderSummary>[]
-        : await _ordersFromCoordinatorPreservingLocal(preserveUiOrders: false);
+        : await _ordersFromCoordinatorPreservingLocal(
+            fetchDlcDetails: false,
+            preserveUiOrders: false,
+            walletSession: session,
+          );
+
+    if (_isStaleWalletSessionGeneration(session)) return;
 
     emit(
       state.copyWith(
@@ -335,20 +503,30 @@ class DlcCubit extends Cubit<DlcState> {
         totalBalanceSat: null,
         availableBalanceSat: null,
         reservedBalanceSat: null,
+        clearWalletPnlSats: true,
         orderbookBids: const [],
         orderbookAsks: const [],
+        strikeOrderbooks: const [],
         infoMessage: infoMessage,
       ),
     );
     _configureBackgroundPolling(orders);
     if (auth != null) {
-      unawaited(_hydrateActiveWalletInBackground());
+      unawaited(
+        _hydrateActiveWalletInBackground(
+          walletSession: session,
+          walletOriginId: auth.walletOriginId,
+        ),
+      );
     }
   }
 
   /// Refreshes balances, orderbook, and strikes after wallet switch (UTXO sync is slowest).
-  Future<void> _hydrateActiveWalletInBackground() async {
-    if (isClosed || state.auth == null) return;
+  Future<void> _hydrateActiveWalletInBackground({
+    required int walletSession,
+    required String walletOriginId,
+  }) async {
+    if (_isStaleWalletSessionForWallet(walletSession, walletOriginId)) return;
 
     Map<String, dynamic>? balances;
     try {
@@ -362,25 +540,16 @@ class DlcCubit extends Cubit<DlcState> {
       current: state.strikePrice,
       suggestions: strikes.suggestions,
     );
-    final orderbookInstrument = _orderbookInstrumentId(
-      state.selectedInstrumentId,
-      selectedStrike,
-    );
-    var orderbookBids = state.orderbookBids;
-    var orderbookAsks = state.orderbookAsks;
-    if (orderbookInstrument != null) {
-      try {
-        final orderbook = await _repository.getOrderbook(orderbookInstrument);
-        orderbookBids = (orderbook['bids'] as List<dynamic>? ?? const [])
-            .whereType<Map<String, dynamic>>()
-            .toList();
-        orderbookAsks = (orderbook['asks'] as List<dynamic>? ?? const [])
-            .whereType<Map<String, dynamic>>()
-            .toList();
-      } catch (_) {
-        // Keep empty book until the next refresh succeeds.
-      }
-    }
+    final instrumentId = state.selectedInstrumentId;
+    final strikeOrderbooks = instrumentId == null
+        ? <DlcStrikeOrderbookSnapshot>[]
+        : await _fetchStrikeOrderbooks(
+            instrumentId: instrumentId,
+            strikePrices: strikes.suggestions,
+          );
+    final legacyBooks = _legacyBooksForStrike(strikeOrderbooks, selectedStrike);
+
+    if (_isStaleWalletSessionForWallet(walletSession, walletOriginId)) return;
 
     if (!isClosed) {
       emit(
@@ -389,8 +558,10 @@ class DlcCubit extends Cubit<DlcState> {
           totalBalanceSat: (balances?['total_balance'] as num?)?.toInt(),
           availableBalanceSat: (balances?['available_balance'] as num?)?.toInt(),
           reservedBalanceSat: (balances?['reserved_balance'] as num?)?.toInt(),
-          orderbookBids: orderbookBids,
-          orderbookAsks: orderbookAsks,
+          orderbookBids: legacyBooks.bids,
+          orderbookAsks: legacyBooks.asks,
+          strikeOrderbooks: strikeOrderbooks,
+          orderbookRefreshing: false,
           suggestedStrikePrices: strikes.suggestions,
           strikePrice: selectedStrike,
           btcUsdSpotPrice: strikes.spotPrice,
@@ -411,7 +582,9 @@ class DlcCubit extends Cubit<DlcState> {
       };
       utxoSyncInfo = formatDlcWalletSyncInfoMessage(sync);
       if (sync.hasCancelledOrders) {
-        orders = await _ordersFromCoordinatorPreservingLocal();
+        orders = await _ordersFromCoordinatorPreservingLocal(
+          walletSession: walletSession,
+        );
       }
     } catch (e) {
       try {
@@ -422,14 +595,24 @@ class DlcCubit extends Cubit<DlcState> {
       utxoSyncInfo = 'Could not sync wallet UTXOs with the coordinator: $e';
     }
 
+    if (_isStaleWalletSessionForWallet(walletSession, walletOriginId)) return;
+
     if (!isClosed) {
+      final walletPnlSats = await _resolveWalletPnlSats(
+        balances: balances,
+        orders: orders,
+        btcUsdSpotPrice: state.btcUsdSpotPrice,
+      );
+      if (_isStaleWalletSessionForWallet(walletSession, walletOriginId)) return;
       emit(
         state.copyWith(
           orders: orders,
           totalBalanceSat: (balances?['total_balance'] as num?)?.toInt(),
           availableBalanceSat: (balances?['available_balance'] as num?)?.toInt(),
           reservedBalanceSat: (balances?['reserved_balance'] as num?)?.toInt(),
-          infoMessage: _combineInfoMessages([utxoSyncInfo, state.infoMessage]),
+          walletPnlSats: walletPnlSats,
+          infoMessage: utxoSyncInfo,
+          clearInfo: utxoSyncInfo == null,
         ),
       );
       _configureBackgroundPolling(orders);
@@ -453,24 +636,81 @@ class DlcCubit extends Cubit<DlcState> {
           ? current
           : dlcInstrumentId(filtered.first);
     }
+    // ignore: discarded_futures
+    selectOptionInstrumentAndStrike(
+      optionType: optionType,
+      instrumentId: nextId,
+      strikePrice: state.strikePrice,
+    );
+  }
+
+  /// Orderbook: instruments catalog, strike suggestions, and open book per strike.
+  Future<void> refreshOrderbookTab() async {
     emit(
       state.copyWith(
-        optionType: optionType,
-        clearSelectedInstrument: nextId == null,
-        selectedInstrumentId: nextId,
+        orderbookRefreshing: true,
+        clearInfo: true,
         clearError: true,
       ),
     );
-    if (nextId != null) {
-      // ignore: discarded_futures
-      _refreshOrderbookForSelection(
-        instrumentId: nextId,
-        strikePrice: state.strikePrice,
-      );
+    try {
+      await _refreshOrderbookCatalog();
+    } catch (e) {
+      if (!isClosed) {
+        emit(
+          state.copyWith(
+            orderbookRefreshing: false,
+            errorMessage: 'Failed to refresh orderbook: $e',
+          ),
+        );
+      }
     }
   }
 
-  /// Refetches instruments from the coordinator and refreshes the orderbook.
+  /// Instruments + BTC/USD strikes + per-strike open orders (no wallet UTXO sync).
+  Future<void> _refreshOrderbookCatalog() async {
+    final instruments = await _repository.listInstruments();
+    final strikes = await _loadSuggestedStrikes();
+    final filtered = instruments
+        .where((i) => dlcInstrumentMatchesOptionType(i, state.optionType))
+        .toList();
+    var selectedId = state.selectedInstrumentId;
+    if (selectedId == null ||
+        !filtered.any((i) => dlcInstrumentId(i) == selectedId)) {
+      selectedId = filtered.isEmpty ? null : dlcInstrumentId(filtered.first);
+    }
+    final selectedStrike = _selectStrike(
+      current: state.strikePrice,
+      suggestions: strikes.suggestions,
+    );
+    final strikeOrderbooks = selectedId == null
+        ? <DlcStrikeOrderbookSnapshot>[]
+        : await _fetchStrikeOrderbooks(
+            instrumentId: selectedId,
+            strikePrices: strikes.suggestions,
+          );
+    final legacyBooks = _legacyBooksForStrike(strikeOrderbooks, selectedStrike);
+    if (isClosed) return;
+    emit(
+      state.copyWith(
+        instruments: instruments,
+        clearSelectedInstrument: selectedId == null,
+        selectedInstrumentId: selectedId,
+        strikePrice: selectedStrike,
+        clearStrikePrice: selectedStrike == null,
+        suggestedStrikePrices: strikes.suggestions,
+        btcUsdSpotPrice: strikes.spotPrice,
+        strikePriceError: strikes.error,
+        clearStrikePriceError: strikes.error == null,
+        strikeOrderbooks: strikeOrderbooks,
+        orderbookBids: legacyBooks.bids,
+        orderbookAsks: legacyBooks.asks,
+        orderbookRefreshing: false,
+      ),
+    );
+  }
+
+  /// Refetches instruments from the coordinator and refreshes strike orderbooks.
   Future<void> refreshInstruments() async {
     emit(state.copyWith(loading: true, clearError: true));
     try {
@@ -483,31 +723,33 @@ class DlcCubit extends Cubit<DlcState> {
           !filtered.any((i) => dlcInstrumentId(i) == selectedId)) {
         selectedId = filtered.isEmpty ? null : dlcInstrumentId(filtered.first);
       }
-      final orderbookInstrument = _orderbookInstrumentId(
-        selectedId,
+      final strikeOrderbooks = selectedId == null
+          ? <DlcStrikeOrderbookSnapshot>[]
+          : await _fetchStrikeOrderbooks(
+              instrumentId: selectedId,
+              strikePrices: state.suggestedStrikePrices,
+            );
+      final legacyBooks = _legacyBooksForStrike(
+        strikeOrderbooks,
         state.strikePrice,
       );
-      final orderbook = orderbookInstrument == null
-          ? <String, dynamic>{}
-          : await _repository.getOrderbook(orderbookInstrument);
       emit(
         state.copyWith(
           loading: false,
           instruments: instruments,
           clearSelectedInstrument: selectedId == null,
           selectedInstrumentId: selectedId,
-          orderbookBids: (orderbook['bids'] as List<dynamic>? ?? const [])
-              .whereType<Map<String, dynamic>>()
-              .toList(),
-          orderbookAsks: (orderbook['asks'] as List<dynamic>? ?? const [])
-              .whereType<Map<String, dynamic>>()
-              .toList(),
+          orderbookBids: legacyBooks.bids,
+          orderbookAsks: legacyBooks.asks,
+          strikeOrderbooks: strikeOrderbooks,
+          orderbookRefreshing: false,
         ),
       );
     } catch (e) {
       emit(
         state.copyWith(
           loading: false,
+          orderbookRefreshing: false,
           errorMessage: 'Failed to refresh instruments: $e',
         ),
       );
@@ -515,7 +757,13 @@ class DlcCubit extends Cubit<DlcState> {
   }
 
   void setTab(int index) {
-    emit(state.copyWith(selectedTabIndex: index));
+    emit(
+      state.copyWith(
+        selectedTabIndex: index,
+        clearInfo: true,
+        clearError: true,
+      ),
+    );
     if (index == 2) {
       _configureBackgroundPolling(state.orders);
     }
@@ -578,13 +826,43 @@ class DlcCubit extends Cubit<DlcState> {
       }
       sats = rounded.toDouble();
     }
-    emit(state.copyWith(price: sats!, clearError: true));
+    emit(state.copyWith(price: sats, clearError: true));
   }
 
   void setStrikePrice(double? strikePrice) {
-    selectInstrumentAndStrike(
-      instrumentId: state.selectedInstrumentId,
-      strikePrice: strikePrice,
+    final legacyBooks = _legacyBooksForStrike(
+      state.strikeOrderbooks,
+      strikePrice,
+    );
+    emit(
+      state.copyWith(
+        strikePrice: strikePrice,
+        clearStrikePrice: strikePrice == null,
+        orderbookBids: legacyBooks.bids,
+        orderbookAsks: legacyBooks.asks,
+      ),
+    );
+  }
+
+  void applyCreateOrderFromOrderbookDepth({
+    required double strikePrice,
+    required bool isAskRow,
+    required double quantity,
+    required int? premiumPerContractSats,
+  }) {
+    final snapshot = _strikeSnapshot(strikePrice);
+    emit(
+      state.copyWith(
+        strikePrice: strikePrice,
+        clearStrikePrice: false,
+        orderbookBids: snapshot?.bids ?? const [],
+        orderbookAsks: snapshot?.asks ?? const [],
+        createOrderMatchIntent: true,
+        side: isAskRow ? DlcOrderSide.buy : DlcOrderSide.sell,
+        quantity: quantity,
+        price: premiumPerContractSats?.toDouble() ?? state.price,
+        clearError: true,
+      ),
     );
   }
 
@@ -592,6 +870,7 @@ class DlcCubit extends Cubit<DlcState> {
     required String? instrumentId,
     required double? strikePrice,
   }) {
+    // ignore: discarded_futures
     selectOptionInstrumentAndStrike(
       optionType: state.optionType,
       instrumentId: instrumentId,
@@ -599,11 +878,16 @@ class DlcCubit extends Cubit<DlcState> {
     );
   }
 
-  void selectOptionInstrumentAndStrike({
+  Future<void> selectOptionInstrumentAndStrike({
     required DlcOptionType optionType,
     required String? instrumentId,
     required double? strikePrice,
-  }) {
+  }) async {
+    final instrumentChanged = instrumentId != state.selectedInstrumentId;
+    final optionTypeChanged = optionType != state.optionType;
+    final needsMarketLoad =
+        instrumentId != null && (instrumentChanged || optionTypeChanged);
+
     emit(
       state.copyWith(
         optionType: optionType,
@@ -612,29 +896,94 @@ class DlcCubit extends Cubit<DlcState> {
         strikePrice: strikePrice,
         clearStrikePrice: strikePrice == null,
         clearError: true,
+        orderbookRefreshing: needsMarketLoad,
+        strikeOrderbooks: instrumentChanged ? const [] : state.strikeOrderbooks,
+        orderbookBids: instrumentChanged ? const [] : state.orderbookBids,
+        orderbookAsks: instrumentChanged ? const [] : state.orderbookAsks,
       ),
     );
-    if (instrumentId != null) {
-      // ignore: discarded_futures
-      _refreshOrderbookForSelection(
-        instrumentId: instrumentId,
-        strikePrice: strikePrice,
+
+    if (instrumentId == null) {
+      emit(
+        state.copyWith(
+          strikeOrderbooks: const [],
+          orderbookBids: const [],
+          orderbookAsks: const [],
+          orderbookRefreshing: false,
+        ),
       );
+      return;
+    }
+
+    if (!needsMarketLoad) {
+      if (strikePrice != null) {
+        setStrikePrice(strikePrice);
+      }
+      return;
+    }
+
+    try {
+      await _reloadInstrumentMarketData();
+    } catch (e) {
+      if (!isClosed) {
+        emit(
+          state.copyWith(
+            orderbookRefreshing: false,
+            errorMessage: 'Failed to load instrument: $e',
+          ),
+        );
+      }
     }
   }
 
   Future<void> refreshStrikePrices() async {
+    if (state.selectedInstrumentId == null) return;
+    emit(state.copyWith(orderbookRefreshing: true, clearError: true));
+    try {
+      await _reloadInstrumentMarketData();
+    } catch (e) {
+      if (!isClosed) {
+        emit(
+          state.copyWith(
+            orderbookRefreshing: false,
+            strikePriceError: 'Could not refresh BTC/USD strike suggestions: $e',
+          ),
+        );
+      }
+    }
+  }
+
+  /// Strike suggestions + per-strike orderbooks for the selected template instrument.
+  Future<void> _reloadInstrumentMarketData() async {
     final strikes = await _loadSuggestedStrikes();
+    final selectedStrike = _selectStrike(
+      current: state.strikePrice,
+      suggestions: strikes.suggestions,
+    );
+    final instrumentId = state.selectedInstrumentId;
+    if (instrumentId == null) {
+      if (!isClosed) {
+        emit(state.copyWith(orderbookRefreshing: false));
+      }
+      return;
+    }
+    final strikeOrderbooks = await _fetchStrikeOrderbooks(
+      instrumentId: instrumentId,
+      strikePrices: strikes.suggestions,
+    );
+    if (isClosed) return;
+    final legacyBooks = _legacyBooksForStrike(strikeOrderbooks, selectedStrike);
     emit(
       state.copyWith(
         suggestedStrikePrices: strikes.suggestions,
-        strikePrice: _selectStrike(
-          current: state.strikePrice,
-          suggestions: strikes.suggestions,
-        ),
+        strikePrice: selectedStrike,
         btcUsdSpotPrice: strikes.spotPrice,
         strikePriceError: strikes.error,
         clearStrikePriceError: strikes.error == null,
+        strikeOrderbooks: strikeOrderbooks,
+        orderbookBids: legacyBooks.bids,
+        orderbookAsks: legacyBooks.asks,
+        orderbookRefreshing: false,
       ),
     );
   }
@@ -713,47 +1062,66 @@ class DlcCubit extends Cubit<DlcState> {
         ),
       );
     } catch (e) {
-      final message = e.toString();
-      final lower = message.toLowerCase();
-      final notEnoughBalance =
-          message.toLowerCase().contains('insufficient available balance') ||
-          lower.contains('insufficient') ||
-          lower.contains('not enough');
-      final strikeRequired =
-          lower.contains('strike price is required') ||
-          lower.contains('resolved instrument_id') ||
-          lower.contains('strike instruments');
-      final partner403 =
-          lower.contains('403') &&
-          (lower.contains('partner') || lower.contains('x-partner-token'));
-      final wallet401 = lower.contains('401');
-      final instrument404 = lower.contains('404');
-      final quantityTooSmall =
-          lower.contains('quantity must be positive') ||
-          lower.contains('minimum order size') ||
-          lower.contains('0.01 contracts');
-      final negativePremium =
-          lower.contains('premium per contract') && lower.contains('negative');
-      emit(
-        state.copyWith(
-          errorMessage: partner403
-              ? 'Coordinator rejected the request (403). Check DLC_COORDINATOR_PARTNER_TOKEN and coordinator configuration.'
-              : wallet401
-              ? 'DLC wallet token is invalid or expired. Refresh or re-register this wallet.'
-              : instrument404
-              ? 'Selected instrument was not found. Refresh instruments and choose again.'
-              : strikeRequired
-              ? 'Select a strike price greater than 0 before creating this order.'
-              : quantityTooSmall
-              ? 'Order quantity must be positive.'
-              : negativePremium
-              ? 'Premium per contract cannot be negative.'
-              : notEnoughBalance
-              ? 'Insufficient available balance. Sync wallet UTXOs with the coordinator, reduce quantity, or free funds.'
-              : 'Create order failed: $e',
-        ),
-      );
+      emit(state.copyWith(errorMessage: _friendlyCreateOrderError(e)));
     }
+  }
+
+  /// Maps a coordinator / wallet error to a user-facing message for the
+  /// create-order flow. Used by both the synchronous validation catch and
+  /// the unawaited background completion catch so the same heuristics apply
+  /// regardless of where the failure originated.
+  String _friendlyCreateOrderError(Object e) {
+    final message = e.toString();
+    final lower = message.toLowerCase();
+    final notEnoughBalance =
+        lower.contains('insufficient available balance') ||
+        lower.contains('insufficient balance') ||
+        lower.contains('not enough balance') ||
+        lower.contains('insufficient') ||
+        lower.contains('not enough');
+    final strikeRequired =
+        lower.contains('strike price is required') ||
+        lower.contains('resolved instrument_id') ||
+        lower.contains('strike instruments');
+    final partner403 =
+        lower.contains('403') &&
+        (lower.contains('partner') || lower.contains('x-partner-token'));
+    final wallet401 = lower.contains('401');
+    final instrument404 = lower.contains('404');
+    final quantityTooSmall =
+        lower.contains('quantity must be positive') ||
+        lower.contains('minimum order size') ||
+        lower.contains('0.01 contracts');
+    final negativePremium =
+        lower.contains('premium per contract') && lower.contains('negative');
+    if (partner403) {
+      return 'Coordinator rejected the request (403). Check DLC_COORDINATOR_PARTNER_TOKEN and coordinator configuration.';
+    }
+    if (wallet401) {
+      return 'DLC wallet token is invalid or expired. Refresh or re-register this wallet.';
+    }
+    if (instrument404) {
+      return 'Selected instrument was not found. Refresh instruments and choose again.';
+    }
+    if (strikeRequired) {
+      return 'Select a strike price greater than 0 before creating this order.';
+    }
+    if (quantityTooSmall) {
+      return 'Order quantity must be positive.';
+    }
+    if (negativePremium) {
+      return 'Premium per contract cannot be negative.';
+    }
+    if (notEnoughBalance) {
+      // The coordinator-visible balance can lag the on-chain wallet view for
+      // a few seconds after a recent match (its reserved-balance accounting
+      // still holds the freshly-matched order). Phrase the message so users
+      // who clearly have funds know to retry shortly.
+      return 'Coordinator reports insufficient available balance. UTXOs may '
+          'still be reconciling after a recent match — wait a few seconds '
+          'and try again, or reduce quantity / free funds.';
+    }
+    return 'Create order failed: $e';
   }
 
   Future<({double? spotPrice, List<double> suggestions, String? error})>
@@ -892,30 +1260,74 @@ class DlcCubit extends Cubit<DlcState> {
     }
   }
 
-  Future<void> _refreshOrderbookForSelection({
+  Future<List<DlcStrikeOrderbookSnapshot>> _fetchStrikeOrderbooks({
     required String instrumentId,
-    required double? strikePrice,
+    required List<double> strikePrices,
   }) async {
-    try {
-      final resolvedInstrumentId = _orderbookInstrumentId(
-        instrumentId,
-        strikePrice,
-      );
-      if (resolvedInstrumentId == null) return;
-      final orderbook = await _repository.getOrderbook(resolvedInstrumentId);
-      emit(
-        state.copyWith(
-          orderbookBids: (orderbook['bids'] as List<dynamic>? ?? const [])
+    final strikes = dlcStrikesForOrderbook(
+      templateInstrumentId: instrumentId,
+      suggestedStrikePrices: strikePrices,
+    );
+    if (strikes.isEmpty) return const [];
+
+    final snapshots = await Future.wait(
+      strikes.map((strike) async {
+        final resolvedId = _orderbookInstrumentId(instrumentId, strike);
+        if (resolvedId == null) return null;
+        try {
+          final orderbook = await _repository.getOrderbook(resolvedId);
+          final bids = (orderbook['bids'] as List<dynamic>? ?? const [])
               .whereType<Map<String, dynamic>>()
-              .toList(),
-          orderbookAsks: (orderbook['asks'] as List<dynamic>? ?? const [])
+              .toList();
+          final asks = (orderbook['asks'] as List<dynamic>? ?? const [])
               .whereType<Map<String, dynamic>>()
-              .toList(),
-        ),
-      );
-    } catch (_) {
-      // Keep current orderbook snapshot on refresh failures.
+              .toList();
+          return dlcBuildStrikeOrderbookSnapshot(
+            strikePrice: strike,
+            bids: bids,
+            asks: asks,
+          );
+        } catch (_) {
+          return dlcBuildStrikeOrderbookSnapshot(
+            strikePrice: strike,
+            bids: const [],
+            asks: const [],
+          );
+        }
+      }),
+    );
+
+    final resolved = snapshots.whereType<DlcStrikeOrderbookSnapshot>().toList()
+      ..sort((a, b) => a.strikePrice.compareTo(b.strikePrice));
+    return resolved;
+  }
+
+  DlcStrikeOrderbookSnapshot? _strikeSnapshot(double strikePrice) {
+    for (final snapshot in state.strikeOrderbooks) {
+      if (snapshot.strikePrice == strikePrice) return snapshot;
     }
+    return null;
+  }
+
+  ({List<Map<String, dynamic>> bids, List<Map<String, dynamic>> asks})
+  _legacyBooksForStrike(
+    List<DlcStrikeOrderbookSnapshot> snapshots,
+    double? strikePrice,
+  ) {
+    if (snapshots.isEmpty) {
+      return (bids: const [], asks: const []);
+    }
+    DlcStrikeOrderbookSnapshot? selected;
+    if (strikePrice != null) {
+      for (final snapshot in snapshots) {
+        if (snapshot.strikePrice == strikePrice) {
+          selected = snapshot;
+          break;
+        }
+      }
+    }
+    selected ??= snapshots.first;
+    return (bids: selected.bids, asks: selected.asks);
   }
 
   String? _orderbookInstrumentId(String? instrumentId, double? strikePrice) {
@@ -940,34 +1352,39 @@ class DlcCubit extends Cubit<DlcState> {
   }
 
   bool _shouldPollOrderStatus(DlcOrderSummary order) {
-    if (needsDlcNegotiation(order)) return true;
-    final status = order.status.toLowerCase();
-    final isClosed =
-        status.contains('closed') ||
-        status.contains('settled') ||
-        status == 'cancelled' ||
-        status == 'expired' ||
-        status == 'rejected' ||
-        status == 'terminated';
-    return !isClosed;
+    return orderNeedsBackgroundStatusPoll(order);
   }
 
   Future<void> _backgroundPollTick() async {
     if (_pollInFlight || isClosed || state.loading) {
       return;
     }
+    final session = _walletSessionGeneration;
+    final walletOriginId = state.auth?.walletOriginId;
+    if (walletOriginId == null) return;
+
     _pollInFlight = true;
     try {
       if (state.auth != null &&
           !state.processingOrder &&
           !_negotiationInFlight &&
           await _repository.hasOrdersNeedingNegotiation()) {
-        await _runNegotiationWorker(showProcessing: true);
+        await _runNegotiationWorker(
+          showProcessing: false,
+          walletSession: session,
+          walletOriginId: walletOriginId,
+        );
         return;
       }
-      final orders = await _ordersFromCoordinatorPreservingLocal();
-      if (!isClosed) {
-        emit(state.copyWith(orders: orders));
+      final previousOrders = state.orders;
+      final orders = await _ordersFromCoordinatorPreservingLocal(
+        walletSession: session,
+      );
+      if (!_isStaleWalletSessionForWallet(session, walletOriginId)) {
+        await _applyOrdersAndMaybeSyncUtxosAfterProjection(
+          previousOrders: previousOrders,
+          orders: orders,
+        );
         _configureBackgroundPolling(orders);
       }
     } catch (_) {
@@ -980,10 +1397,14 @@ class DlcCubit extends Cubit<DlcState> {
   Future<void> _runNegotiationWorker({
     String? focusOrderId,
     bool showProcessing = false,
+    int? walletSession,
+    String? walletOriginId,
   }) async {
     if (_negotiationInFlight || isClosed || state.auth == null) {
       return;
     }
+    final session = walletSession ?? _walletSessionGeneration;
+    final originId = walletOriginId ?? state.auth!.walletOriginId;
     _negotiationInFlight = true;
     try {
       if (showProcessing && !state.processingOrder) {
@@ -992,7 +1413,7 @@ class DlcCubit extends Cubit<DlcState> {
       final result = await _repository.runNegotiationPass(
         focusOrderId: focusOrderId,
       );
-      if (isClosed) return;
+      if (_isStaleWalletSessionForWallet(session, originId)) return;
 
       final negotiationInfo = _formatNegotiationInfo(result);
       final fatalErrors = result.errors
@@ -1009,40 +1430,46 @@ class DlcCubit extends Cubit<DlcState> {
               )
             : state.orders,
       );
-      emit(
-        state.copyWith(
-          processingOrder: showProcessing ? false : state.processingOrder,
+      if (_isStaleWalletSessionForWallet(session, originId)) return;
+
+      final previousOrders = state.orders;
+      if (showProcessing) {
+        final info = _combineInfoMessages([
+          negotiationInfo,
+          if (benignErrors.isNotEmpty)
+            'Taker accept will continue in the background.',
+        ]);
+        await _applyOrdersAndMaybeSyncUtxosAfterProjection(
+          previousOrders: previousOrders,
           orders: ordersWithPhases,
-          infoMessage: _combineInfoMessages([
-            negotiationInfo,
-            if (benignErrors.isNotEmpty)
-              'Taker accept will continue in the background.',
-            state.infoMessage,
-          ]),
-          errorMessage: fatalErrors.isEmpty
-              ? state.errorMessage
-              : _combineInfoMessages([
-                  fatalErrors.join(' '),
-                  state.errorMessage,
-                ]),
-        ),
-      );
+          extraInfoMessage: info,
+          processingOrder: false,
+          errorMessage:
+              fatalErrors.isEmpty ? null : fatalErrors.join(' '),
+          clearError: fatalErrors.isEmpty,
+          clearInfo: info == null,
+        );
+      } else {
+        await _applyOrdersAndMaybeSyncUtxosAfterProjection(
+          previousOrders: previousOrders,
+          orders: ordersWithPhases,
+        );
+      }
       _configureBackgroundPolling(ordersWithPhases);
     } catch (e) {
-      if (!isClosed) {
+      if (!_isStaleWalletSessionForWallet(session, originId) &&
+          !isClosed &&
+          showProcessing) {
         final benign = isBenignDlcNegotiationMessage(e.toString());
         emit(
           state.copyWith(
-            processingOrder: showProcessing ? false : state.processingOrder,
+            processingOrder: false,
             infoMessage: benign
-                ? _combineInfoMessages([
-                    'Taker accept will continue in the background.',
-                    state.infoMessage,
-                  ])
-                : state.infoMessage,
-            errorMessage: benign
-                ? state.errorMessage
-                : 'DLC negotiation failed: $e',
+                ? 'Taker accept will continue in the background.'
+                : null,
+            clearInfo: !benign,
+            errorMessage: benign ? null : 'DLC negotiation failed: $e',
+            clearError: benign,
           ),
         );
       }
@@ -1077,6 +1504,62 @@ class DlcCubit extends Cubit<DlcState> {
     return super.close();
   }
 
+  Future<void> _applyOrdersAndMaybeSyncUtxosAfterProjection({
+    required List<DlcOrderSummary> previousOrders,
+    required List<DlcOrderSummary> orders,
+    String? extraInfoMessage,
+    bool? processingOrder,
+    String? errorMessage,
+    bool clearError = false,
+    bool clearInfo = false,
+  }) async {
+    if (isClosed) return;
+
+    var syncInfo = extraInfoMessage;
+    DlcWalletSyncResult? sync;
+    if (state.auth != null) {
+      sync = await _repository.syncActiveWalletUtxosAfterCoordinatorProjection(
+        currentOrders: orders,
+        previousOrders: previousOrders,
+      );
+      final syncMessage = formatDlcWalletSyncInfoMessage(sync);
+      if (syncMessage != null) {
+        syncInfo = _combineInfoMessages([syncInfo, syncMessage]);
+      }
+    }
+
+    if (isClosed) return;
+
+    emit(
+      state.copyWith(
+        orders: orders,
+        processingOrder: processingOrder,
+        totalBalanceSat: sync?.totalBalanceSat ?? state.totalBalanceSat,
+        availableBalanceSat: sync?.availableBalanceSat ?? state.availableBalanceSat,
+        reservedBalanceSat: sync?.reservedBalanceSat ?? state.reservedBalanceSat,
+        infoMessage: syncInfo,
+        clearInfo: clearInfo && syncInfo == null,
+        errorMessage: errorMessage,
+        clearError: clearError,
+      ),
+    );
+
+    if (sync != null && state.auth != null) {
+      final walletPnlSats = await _resolveWalletPnlSats(
+        balances: {
+          'total_balance': sync.totalBalanceSat,
+          'available_balance': sync.availableBalanceSat,
+          'reserved_balance': sync.reservedBalanceSat,
+        },
+        orders: orders,
+        btcUsdSpotPrice: state.btcUsdSpotPrice,
+      );
+      if (!isClosed && walletPnlSats != null) {
+        emit(state.copyWith(walletPnlSats: walletPnlSats));
+      }
+    }
+  }
+
   String? _buildCoordinatorTradingHint({
     required Environment environment,
     required Map<String, dynamic>? readiness,
@@ -1091,51 +1574,46 @@ class DlcCubit extends Cubit<DlcState> {
     if (readinessFailed) {
       lines.add('Could not read coordinator readiness (network or URL).');
     } else if (readiness != null) {
-      final node = readiness['bitcoin_node'];
-      final el = readiness['electrumx'];
-      final nodeOk = node is Map<String, dynamic> && node['ok'] == true;
-      final elOk = el is Map<String, dynamic> && el['ok'] == true;
-      if (!nodeOk || !elOk) {
-        lines.add(
-          'Coordinator dependencies are not all healthy (Bitcoin node / ElectrumX).',
+      final parsed = DlcSystemReadiness.tryParse(readiness);
+      if (parsed == null) {
+        lines.add('Coordinator readiness response was not recognized.');
+      } else {
+        if (!parsed.canTrade) {
+          if (!parsed.isChainBackendOk) {
+            final chainError = parsed.chainBackend.error?.trim();
+            lines.add(
+              chainError != null && chainError.isNotEmpty
+                  ? 'Coordinator chain backend is unavailable: $chainError'
+                  : 'Coordinator chain backend is unavailable.',
+            );
+          }
+          if (!parsed.tradingReady) {
+            lines.add('Coordinator reports trading is not ready.');
+          }
+        }
+        if (parsed.blockers.isNotEmpty) {
+          lines.add('Blockers: ${parsed.blockers.join('; ')}');
+        }
+        if (!environment.isTestnet && parsed.isRegtest) {
+          lines.add(
+            'Coordinator reports regtest while this app environment is mainnet.',
+          );
+        }
+        final coordinatorLooksTestnet = dlcCoordinatorNetworkIsTestnet(
+          network: parsed.network,
+          isRegtest: parsed.isRegtest,
         );
-      }
-      final blockers = readiness['blockers'];
-      if (blockers is List && blockers.isNotEmpty) {
-        lines.add('Blockers: ${blockers.map((e) => e.toString()).join('; ')}');
-      }
-      final isRegtest = readiness['is_regtest'] == true;
-      if (!environment.isTestnet && isRegtest) {
-        lines.add(
-          'Coordinator reports regtest while this app environment is mainnet.',
-        );
-      }
-      final bitcoinNode = readiness['bitcoin_node'];
-      final nodeDetails = bitcoinNode is Map<String, dynamic>
-          ? bitcoinNode['details']
-          : null;
-      final chain = nodeDetails is Map<String, dynamic>
-          ? nodeDetails['chain']?.toString().toLowerCase()
-          : null;
-      final electrumDetails = el is Map<String, dynamic> ? el['details'] : null;
-      final providerNetwork = electrumDetails is Map<String, dynamic>
-          ? electrumDetails['provider_network']?.toString().toLowerCase()
-          : null;
-      final coordinatorLooksTestnet =
-          isRegtest ||
-          chain == 'test' ||
-          chain == 'testnet' ||
-          providerNetwork == 'test' ||
-          providerNetwork == 'testnet';
-      if (environment.isTestnet && !coordinatorLooksTestnet) {
-        lines.add(
-          'Coordinator does not report testnet/testnet3 while this app environment is testnet.',
-        );
-      }
-      if (!environment.isTestnet && coordinatorLooksTestnet) {
-        lines.add(
-          'Coordinator is running on testnet/testnet3; switch the app environment to testnet before trading.',
-        );
+        final networkLabel = parsed.network.isEmpty ? 'unknown' : parsed.network;
+        if (environment.isTestnet && !coordinatorLooksTestnet) {
+          lines.add(
+            'Coordinator network is $networkLabel while this app environment is testnet.',
+          );
+        }
+        if (!environment.isTestnet && coordinatorLooksTestnet) {
+          lines.add(
+            'Coordinator is on $networkLabel; switch the app environment to testnet before trading.',
+          );
+        }
       }
     }
     if (lines.isEmpty) return null;
@@ -1143,9 +1621,17 @@ class DlcCubit extends Cubit<DlcState> {
   }
 
   Future<List<DlcOrderSummary>> _ordersFromCoordinatorPreservingLocal({
+    bool fetchDlcDetails = true,
     bool preserveUiOrders = true,
+    int? walletSession,
   }) async {
-    final coordinatorOrders = await _repository.listOrders();
+    final session = walletSession ?? _walletSessionGeneration;
+    final coordinatorOrders = await _repository.listOrders(
+      fetchDlcDetails: fetchDlcDetails,
+    );
+    if (_isStaleWalletSessionGeneration(session)) {
+      return applyResolvedInFlightPhases(coordinatorOrders);
+    }
     final merged = preserveUiOrders
         ? mergeCoordinatorOrdersWithLocal(
             coordinatorOrders: coordinatorOrders,
@@ -1261,23 +1747,17 @@ class DlcCubit extends Cubit<DlcState> {
         balances = await _repository.getWalletBalances();
       } catch (_) {}
 
-      var orderbookBids = state.orderbookBids;
-      var orderbookAsks = state.orderbookAsks;
-      final orderbookInstrument = _orderbookInstrumentId(
-        state.selectedInstrumentId,
+      final selectedInstrumentId = state.selectedInstrumentId;
+      final strikeOrderbooks = selectedInstrumentId == null
+          ? state.strikeOrderbooks
+          : await _fetchStrikeOrderbooks(
+              instrumentId: selectedInstrumentId,
+              strikePrices: state.suggestedStrikePrices,
+            );
+      final legacyBooks = _legacyBooksForStrike(
+        strikeOrderbooks,
         state.strikePrice,
       );
-      if (orderbookInstrument != null) {
-        try {
-          final orderbook = await _repository.getOrderbook(orderbookInstrument);
-          orderbookBids = (orderbook['bids'] as List<dynamic>? ?? const [])
-              .whereType<Map<String, dynamic>>()
-              .toList();
-          orderbookAsks = (orderbook['asks'] as List<dynamic>? ?? const [])
-              .whereType<Map<String, dynamic>>()
-              .toList();
-        } catch (_) {}
-      }
 
       emit(
         state.copyWith(
@@ -1289,8 +1769,9 @@ class DlcCubit extends Cubit<DlcState> {
                   state.availableBalanceSat,
           reservedBalanceSat: (balances?['reserved_balance'] as num?)?.toInt() ??
               state.reservedBalanceSat,
-          orderbookBids: orderbookBids,
-          orderbookAsks: orderbookAsks,
+          orderbookBids: legacyBooks.bids,
+          orderbookAsks: legacyBooks.asks,
+          strikeOrderbooks: strikeOrderbooks,
           infoMessage: _combineInfoMessages([
             createOrderPlacedInfoMessage(
               matchIntent: created.pendingMatchAccept || matchIntent,
@@ -1319,13 +1800,65 @@ class DlcCubit extends Cubit<DlcState> {
       }
     } catch (e) {
       if (isClosed) return;
+      // The create call may have actually succeeded on the coordinator but a
+      // follow-up network step (e.g. listOrders for reconcile, or the second
+      // sync-utxos) raised. Look up the order by idempotency key before
+      // surfacing an error so a successful create + immediate match (order
+      // becoming "live") is not reported as "Create order failed".
+      final reconciled =
+          await _repository.tryReconcileCreatedOrderByDraft(draft);
+      if (isClosed) return;
+      if (reconciled != null) {
+        final resolved = applyResolvedInFlightPhase(reconciled);
+        final orders = applyResolvedInFlightPhases(
+          _replaceOrderInList(state.orders, clientOrderId, resolved),
+        );
+        emit(
+          state.copyWith(
+            orders: orders,
+            infoMessage: createOrderPlacedInfoMessage(
+              matchIntent: resolved.pendingMatchAccept || matchIntent,
+            ),
+            clearError: true,
+          ),
+        );
+        _configureBackgroundPolling(orders);
+        if (needsDlcTakerAccept(resolved) || needsDlcNegotiation(resolved)) {
+          unawaited(
+            _runNegotiationWorker(
+              focusOrderId: resolved.orderId,
+              showProcessing: false,
+            ),
+          );
+        }
+        return;
+      }
+
+      // Reconcile could not confirm the order. If the failure was transient
+      // (timeout / connection error) the order may still be in flight on the
+      // coordinator — keep the optimistic placeholder so background polling
+      // can replace it and inform the user that we are still verifying.
+      final transient = isTransientDlcCoordinatorMessage(e.toString());
+      if (transient) {
+        emit(
+          state.copyWith(
+            infoMessage:
+                'Network issue while creating order. Verifying status with the coordinator…',
+            clearError: true,
+          ),
+        );
+        _configureBackgroundPolling(state.orders);
+        unawaited(_backgroundPollTick());
+        return;
+      }
+
       final orders = state.orders
           .where((order) => order.orderId != clientOrderId)
           .toList(growable: false);
       emit(
         state.copyWith(
           orders: orders,
-          errorMessage: 'Create order failed: $e',
+          errorMessage: _friendlyCreateOrderError(e),
         ),
       );
       _configureBackgroundPolling(orders);

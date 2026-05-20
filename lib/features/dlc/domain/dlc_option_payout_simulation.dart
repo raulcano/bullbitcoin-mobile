@@ -1,5 +1,7 @@
 // Models for POST /orders/option-payout-simulation.
 
+import 'dart:math' as math;
+
 class DlcOptionPayoutSimulationRequest {
   const DlcOptionPayoutSimulationRequest({
     required this.side,
@@ -214,4 +216,65 @@ int _readInt(dynamic value) {
   if (value is num) return value.round();
   if (value is String) return int.tryParse(value.trim()) ?? 0;
   return 0;
+}
+
+/// X-axis bounds for the simulate payout chart (call and put).
+///
+/// - min: `min(0.65 × strike, 0.65 × outcome)`
+/// - max: `max(1.35 × strike, 1.35 × outcome)`
+({double min, double max}) dlcPayoutChartStrikeOutcomeXAxis({
+  required int strikeUsd,
+  required int outcomeUsd,
+}) {
+  final min = math.min(strikeUsd * 0.65, outcomeUsd * 0.65).toDouble();
+  var max = math.max(strikeUsd * 1.35, outcomeUsd * 1.35).toDouble();
+  final clampedMin = math.max(0.0, min);
+  if (max <= clampedMin) {
+    max = clampedMin + 1;
+  }
+  return (min: clampedMin, max: max);
+}
+
+/// X-axis bounds for the simulate payout chart.
+({double min, double max}) dlcPayoutChartFocusedXExtents({
+  required int strikeUsd,
+  required int outcomeUsd,
+  DlcOutcomeIntervalBand? outcomeBand,
+  required List<DlcPayoutInterval> intervals,
+}) {
+  return dlcPayoutChartStrikeOutcomeXAxis(
+    strikeUsd: strikeUsd,
+    outcomeUsd: outcomeUsd,
+  );
+}
+
+/// Y-axis bounds from payout values visible in [xMin, xMax].
+({double min, double max}) dlcPayoutChartYExtentsForX({
+  required double xMin,
+  required double xMax,
+  required List<DlcPayoutInterval> intervals,
+  required List<DlcCanonicalPoint> canonicalPoints,
+}) {
+  var yMin = double.infinity;
+  var yMax = -double.infinity;
+
+  void absorb(double y) {
+    yMin = math.min(yMin, y);
+    yMax = math.max(yMax, y);
+  }
+
+  for (final iv in intervals) {
+    if (iv.end < xMin || iv.start > xMax) continue;
+    absorb(iv.walletPayout.toDouble());
+  }
+  for (final p in canonicalPoints) {
+    final x = p.x.toDouble();
+    if (x < xMin || x > xMax) continue;
+    absorb(p.walletPayout.toDouble());
+  }
+
+  if (yMin == double.infinity) {
+    return (min: 0.0, max: 1.0);
+  }
+  return (min: yMin, max: yMax);
 }

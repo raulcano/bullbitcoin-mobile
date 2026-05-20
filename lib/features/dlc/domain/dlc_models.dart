@@ -6,6 +6,23 @@ enum DlcOptionType { call, put }
 
 enum DlcOrderSide { buy, sell }
 
+/// Aggregated and full depth for one strike on the coordinator orderbook.
+class DlcStrikeOrderbookSnapshot {
+  final double strikePrice;
+  final List<Map<String, dynamic>> bids;
+  final List<Map<String, dynamic>> asks;
+  final int? lowestAskPremiumSats;
+  final int? highestBidPremiumSats;
+
+  const DlcStrikeOrderbookSnapshot({
+    required this.strikePrice,
+    required this.bids,
+    required this.asks,
+    required this.lowestAskPremiumSats,
+    required this.highestBidPremiumSats,
+  });
+}
+
 extension DlcOptionTypeX on DlcOptionType {
   String get value => this == DlcOptionType.call ? 'CALL' : 'PUT';
 }

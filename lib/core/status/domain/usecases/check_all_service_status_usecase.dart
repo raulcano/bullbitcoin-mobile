@@ -15,6 +15,7 @@ import 'package:bb_mobile/core/tor/data/usecases/tor_status_usecase.dart';
 import 'package:bb_mobile/core/tor/tor_status.dart';
 import 'package:bb_mobile/core/utils/constants.dart';
 import 'package:bb_mobile/core/utils/logger.dart';
+import 'package:bb_mobile/features/dlc/domain/dlc_system_readiness.dart';
 import 'package:bb_mobile/core/wallet/data/repositories/wallet_repository.dart';
 import 'package:bb_mobile/core/wallet/domain/entities/wallet.dart';
 import 'package:dio/dio.dart';
@@ -247,14 +248,12 @@ class CheckAllServiceStatusUsecase {
         ),
       );
       final data = response.data;
-      final isReady = data is Map<String, dynamic>
-          ? (data['bitcoin_node'] is Map<String, dynamic>
-                ? (data['bitcoin_node']['ok'] == true)
-                : false) &&
-                (data['electrumx'] is Map<String, dynamic>
-                    ? (data['electrumx']['ok'] == true)
-                    : false)
-          : false;
+      final readiness = data is Map<String, dynamic>
+          ? DlcSystemReadiness.tryParse(data)
+          : data is Map
+          ? DlcSystemReadiness.tryParse(Map<String, dynamic>.from(data))
+          : null;
+      final isReady = readiness?.canTrade ?? false;
 
       return ServiceStatusInfo(
         status: isReady ? ServiceStatus.online : ServiceStatus.offline,

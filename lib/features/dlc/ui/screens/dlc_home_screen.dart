@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:bb_mobile/core/utils/constants.dart';
 import 'package:bb_mobile/features/dlc/domain/dlc_instrument_utils.dart';
 import 'package:bb_mobile/features/dlc/domain/dlc_models.dart';
@@ -32,6 +34,7 @@ class _DlcHomeScreenState extends State<DlcHomeScreen> {
   );
 
   void _applyDepthRowToCreateOrder({
+    required double strikePrice,
     required bool isAskRow,
     required Map<String, dynamic> row,
   }) {
@@ -44,17 +47,18 @@ class _DlcHomeScreenState extends State<DlcHomeScreen> {
     final premSats = dlcOrderbookPremiumPerFullContractSatoshis(row);
 
     final cubit = context.read<DlcCubit>();
-    cubit.setCreateOrderMatchIntent(true);
-    cubit.setSide(isAskRow ? DlcOrderSide.buy : DlcOrderSide.sell);
+    cubit.applyCreateOrderFromOrderbookDepth(
+      strikePrice: strikePrice,
+      isAskRow: isAskRow,
+      quantity: qty,
+      premiumPerContractSats: premSats,
+    );
 
     final qtyText = _formatDecimalInput(qty);
     _quantityController.text = qtyText;
-    cubit.setQuantity(qtyText);
 
     if (premSats != null) {
-      final premText = premSats.toString();
-      _premiumController.text = premText;
-      cubit.setPrice(premText);
+      _premiumController.text = premSats.toString();
     }
   }
 
@@ -137,8 +141,9 @@ class _DlcHomeScreenState extends State<DlcHomeScreen> {
             .toList(growable: false);
         final tradingBlocked = _tradingBlocked(state);
 
-        final showActionOverlay =
-            state.actionInProgress || _simulateLoading;
+        final showActionOverlay = state.actionInProgress ||
+            state.orderbookRefreshing ||
+            _simulateLoading;
 
         return Scaffold(
           body: DlcActionLoadingOverlay(
@@ -152,81 +157,43 @@ class _DlcHomeScreenState extends State<DlcHomeScreen> {
                   onSelect: (idx) {
                     context.read<DlcCubit>().setTab(idx);
                     if (idx == 1) {
-                      context.read<DlcCubit>().refreshInstruments();
+                      unawaited(context.read<DlcCubit>().refreshOrderbookTab());
                     }
                   },
                 ),
                 const _DlcColdPayAttribution(),
                 Expanded(
                   child: RefreshIndicator(
-                    onRefresh: context.read<DlcCubit>().load,
+                    onRefresh: context.read<DlcCubit>().refreshCurrentTab,
                     child: ListView(
                       padding: const EdgeInsets.fromLTRB(16, 6, 16, 16),
                       children: [
                         if (state.errorMessage != null) ...[
                           const SizedBox(height: 12),
-                          Container(
-                            padding: const EdgeInsets.all(10),
-                            decoration: BoxDecoration(
-                              color: Theme.of(
-                                context,
-                              ).colorScheme.errorContainer,
-                              borderRadius: BorderRadius.circular(10),
-                            ),
-                            child: Row(
-                              children: [
-                                Icon(
-                                  Icons.error_outline,
-                                  color: Theme.of(
-                                    context,
-                                  ).colorScheme.onErrorContainer,
-                                ),
-                                const SizedBox(width: 8),
-                                Expanded(
-                                  child: Text(
-                                    state.errorMessage!,
-                                    style: TextStyle(
-                                      color: Theme.of(
-                                        context,
-                                      ).colorScheme.onErrorContainer,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
+                          _DlcTransientMessageBanner(
+                            message: state.errorMessage!,
+                            icon: Icons.error_outline,
+                            backgroundColor: Theme.of(
+                              context,
+                            ).colorScheme.errorContainer,
+                            foregroundColor: Theme.of(
+                              context,
+                            ).colorScheme.onErrorContainer,
+                            onDismiss: context.read<DlcCubit>().clearTransientMessages,
                           ),
                         ],
                         if (state.infoMessage != null) ...[
                           const SizedBox(height: 12),
-                          Container(
-                            padding: const EdgeInsets.all(10),
-                            decoration: BoxDecoration(
-                              color: Theme.of(
-                                context,
-                              ).colorScheme.primaryContainer,
-                              borderRadius: BorderRadius.circular(10),
-                            ),
-                            child: Row(
-                              children: [
-                                Icon(
-                                  Icons.info_outline,
-                                  color: Theme.of(
-                                    context,
-                                  ).colorScheme.onPrimaryContainer,
-                                ),
-                                const SizedBox(width: 8),
-                                Expanded(
-                                  child: Text(
-                                    state.infoMessage!,
-                                    style: TextStyle(
-                                      color: Theme.of(
-                                        context,
-                                      ).colorScheme.onPrimaryContainer,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
+                          _DlcTransientMessageBanner(
+                            message: state.infoMessage!,
+                            icon: Icons.info_outline,
+                            backgroundColor: Theme.of(
+                              context,
+                            ).colorScheme.primaryContainer,
+                            foregroundColor: Theme.of(
+                              context,
+                            ).colorScheme.onPrimaryContainer,
+                            onDismiss: context.read<DlcCubit>().clearTransientMessages,
                           ),
                         ],
                         const SizedBox(height: 8),
@@ -236,7 +203,7 @@ class _DlcHomeScreenState extends State<DlcHomeScreen> {
                           _OrderbookInstrumentCard(
                             state: state,
                             selectedInstrument: selectedForOrderbook,
-                            loading: state.loading,
+                            loading: state.loading || state.orderbookRefreshing,
                             onDepthRowTap: _applyDepthRowToCreateOrder,
                             onOwnOrdersInfoTap: () =>
                                 _showOwnOrderbookOrdersInfo(context),
@@ -311,6 +278,8 @@ class _DlcHomeScreenState extends State<DlcHomeScreen> {
                                               .read<DlcCubit>()
                                               .setSide(selection.first),
                                   ),
+                                  const SizedBox(height: 8),
+                                  _CreateOrderStrikeField(state: state),
                                   const SizedBox(height: 8),
                                   TextField(
                                     controller: _quantityController,
@@ -411,6 +380,51 @@ class _DlcHomeScreenState extends State<DlcHomeScreen> {
           ),
         );
       },
+    );
+  }
+}
+
+class _DlcTransientMessageBanner extends StatelessWidget {
+  const _DlcTransientMessageBanner({
+    required this.message,
+    required this.icon,
+    required this.backgroundColor,
+    required this.foregroundColor,
+    required this.onDismiss,
+  });
+
+  final String message;
+  final IconData icon;
+  final Color backgroundColor;
+  final Color foregroundColor;
+  final VoidCallback onDismiss;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(10, 10, 4, 10),
+      decoration: BoxDecoration(
+        color: backgroundColor,
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, color: foregroundColor),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              message,
+              style: TextStyle(color: foregroundColor),
+            ),
+          ),
+          IconButton(
+            icon: Icon(Icons.close, color: foregroundColor, size: 20),
+            tooltip: 'Dismiss',
+            onPressed: onDismiss,
+            visualDensity: VisualDensity.compact,
+          ),
+        ],
+      ),
     );
   }
 }
@@ -624,6 +638,11 @@ class _SimulateTabPanel extends StatefulWidget {
   State<_SimulateTabPanel> createState() => _SimulateTabPanelState();
 }
 
+const _kSimulateStrikeFallbackUsd = 70000;
+
+int _defaultSimulateStrikeUsd(DlcState state) =>
+    state.btcUsdSpotPrice?.round() ?? _kSimulateStrikeFallbackUsd;
+
 class _SimulateTabPanelState extends State<_SimulateTabPanel> {
   late final TextEditingController _contractsController;
   late final TextEditingController _strikeController;
@@ -639,16 +658,15 @@ class _SimulateTabPanelState extends State<_SimulateTabPanel> {
   DlcOptionPayoutSimulationResult? _result;
   int _chartStrikeUsd = 0;
   int _chartOutcomeUsd = 0;
-  final _simulationResultsKey = GlobalKey();
+  final _payoutChartKey = GlobalKey();
 
   @override
   void initState() {
     super.initState();
     final s = widget.state;
     _contractsController = TextEditingController(text: '1');
-    final strike = s.strikePrice;
     _strikeController = TextEditingController(
-      text: strike != null ? strike.toStringAsFixed(0) : '',
+      text: _defaultSimulateStrikeUsd(s).toString(),
     );
     _premiumController = TextEditingController(
       text: s.price.round().toString(),
@@ -658,6 +676,35 @@ class _SimulateTabPanelState extends State<_SimulateTabPanel> {
       text: spot != null ? spot.round().toString() : '',
     );
     _networkFeeController = TextEditingController(text: '0');
+    if (s.btcUsdSpotPrice == null) {
+      unawaited(_refreshSimulateStrikeFromSpotIfNeeded());
+    }
+  }
+
+  Future<void> _refreshSimulateStrikeFromSpotIfNeeded() async {
+    try {
+      final spot = await locator<DlcRepository>().getBtcUsdSpotPrice();
+      if (!mounted) return;
+      final fallbackText = _kSimulateStrikeFallbackUsd.toString();
+      if (_strikeController.text.trim() == fallbackText) {
+        setState(() {
+          _strikeController.text = spot.round().toString();
+        });
+      }
+    } catch (_) {
+      // Keep [_kSimulateStrikeFallbackUsd] when ticker URL is unavailable.
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant _SimulateTabPanel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final spot = widget.state.btcUsdSpotPrice;
+    if (spot == null || spot == oldWidget.state.btcUsdSpotPrice) return;
+    final fallbackText = _kSimulateStrikeFallbackUsd.toString();
+    if (_strikeController.text.trim() == fallbackText) {
+      _strikeController.text = spot.round().toString();
+    }
   }
 
   @override
@@ -673,13 +720,6 @@ class _SimulateTabPanelState extends State<_SimulateTabPanel> {
   Future<void> _runSimulation() async {
     FocusScope.of(context).unfocus();
     final messenger = ScaffoldMessenger.maybeOf(context);
-
-    if (widget.state.auth == null) {
-      messenger?.showSnackBar(
-        const SnackBar(content: Text('Register your DLC wallet first.')),
-      );
-      return;
-    }
 
     final qtyRaw = _contractsController.text.trim().replaceAll(',', '');
     final qty = double.tryParse(qtyRaw);
@@ -768,7 +808,7 @@ class _SimulateTabPanelState extends State<_SimulateTabPanel> {
         _chartOutcomeUsd = outcome;
       });
       widget.onLoadingChanged(false);
-      _scrollToSimulationResults();
+      _scrollToPayoutChart();
     } on DlcApiException catch (e) {
       if (!mounted) return;
       setState(() {
@@ -791,18 +831,44 @@ class _SimulateTabPanelState extends State<_SimulateTabPanel> {
     }
   }
 
-  void _scrollToSimulationResults() {
+  void _scrollToPayoutChart() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      final target = _simulationResultsKey.currentContext;
+      final target = _payoutChartKey.currentContext;
       if (target == null) return;
       Scrollable.ensureVisible(
         target,
-        alignment: 0.0,
+        alignment: 0.08,
         duration: const Duration(milliseconds: 350),
         curve: Curves.easeOutCubic,
       );
     });
+  }
+
+  void _showSimulatePayoutInfoDialog(BuildContext context) {
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Simulate payout'),
+        content: SingleChildScrollView(
+          child: Text(
+            'Use this tool to explore what payout you could receive for the '
+            'role, contracts, strike, premium, and BTC/USD outcome you enter.\n\n'
+            'Tapping Simulate only runs a calculation against the coordinator — '
+            'no funds move, no order is placed, and nothing is signed on-chain. '
+            'It is a hypothetical exercise to help you understand settlement '
+            'before you trade.',
+            style: Theme.of(ctx).textTheme.bodyMedium,
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
   }
 
   void _showRoundingDeltaInfoDialog(BuildContext context) {
@@ -949,6 +1015,18 @@ class _SimulateTabPanelState extends State<_SimulateTabPanel> {
                       style: theme.textTheme.titleMedium?.copyWith(
                         fontWeight: FontWeight.w600,
                       ),
+                    ),
+                    const Spacer(),
+                    IconButton(
+                      icon: const Icon(Icons.info_outline),
+                      tooltip: 'About simulate payout',
+                      visualDensity: VisualDensity.compact,
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(
+                        minWidth: 36,
+                        minHeight: 36,
+                      ),
+                      onPressed: () => _showSimulatePayoutInfoDialog(context),
                     ),
                   ],
                 ),
@@ -1122,9 +1200,7 @@ class _SimulateTabPanelState extends State<_SimulateTabPanel> {
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton.icon(
-                    onPressed: widget.state.auth == null || _loading
-                        ? null
-                        : _runSimulation,
+                    onPressed: _loading ? null : _runSimulation,
                     icon: const Icon(Icons.play_arrow_outlined),
                     label: const Text('SIMULATE'),
                   ),
@@ -1136,7 +1212,45 @@ class _SimulateTabPanelState extends State<_SimulateTabPanel> {
         if (_result != null) ...[
           const SizedBox(height: 12),
           Card(
-            key: _simulationResultsKey,
+            key: _payoutChartKey,
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(
+                        Icons.show_chart_outlined,
+                        size: 18,
+                        color: theme.colorScheme.primary,
+                      ),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          _simulatePayoutCurveTitle(
+                            role: _role,
+                            optionKind: _optionKind,
+                          ),
+                          style: theme.textTheme.titleMedium?.copyWith(
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  DlcOptionPayoutChart(
+                    result: _result!,
+                    strikeUsd: _chartStrikeUsd,
+                    outcomeUsd: _chartOutcomeUsd,
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Card(
             child: Padding(
               padding: const EdgeInsets.all(16),
               child: Column(
@@ -1241,50 +1355,19 @@ class _SimulateTabPanelState extends State<_SimulateTabPanel> {
               ),
             ),
           ),
-          const SizedBox(height: 12),
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Icon(
-                        Icons.show_chart_outlined,
-                        size: 18,
-                        color: theme.colorScheme.primary,
-                      ),
-                      const SizedBox(width: 6),
-                      Text(
-                        'Payout curve',
-                        style: theme.textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    'Stepped rounded wallet payout (intervals), dashed canonical '
-                    '(canonical_points); strike and outcome_price guides; '
-                    'outcome_interval highlighted.',
-                    style: subtle,
-                  ),
-                  const SizedBox(height: 12),
-                  DlcOptionPayoutChart(
-                    result: _result!,
-                    strikeUsd: _chartStrikeUsd,
-                    outcomeUsd: _chartOutcomeUsd,
-                  ),
-                ],
-              ),
-            ),
-          ),
         ],
       ],
     );
   }
+}
+
+String _simulatePayoutCurveTitle({
+  required DlcOrderSide role,
+  required DlcOptionType optionKind,
+}) {
+  final direction = role == DlcOrderSide.buy ? 'LONG' : 'SHORT';
+  final right = optionKind == DlcOptionType.call ? 'CALL' : 'PUT';
+  return 'Payout for $direction $right';
 }
 
 String _formatSimSatsUnsigned(int sats) =>
@@ -1382,10 +1465,10 @@ class _OverviewPanel extends StatelessWidget {
   Widget build(BuildContext context) {
     final total = (state.totalBalanceSat ?? 0).toDouble();
     final available = (state.availableBalanceSat ?? 0).toDouble();
-    final inOrders = state.orders.length.toDouble();
-    final openCount = state.orders.where(isDlcOpenOrder).length.toDouble();
-    final liveCount = state.orders.where(isDlcLiveOrder).length.toDouble();
-    final closedCount = state.orders.where(isDlcClosedOrder).length.toDouble();
+    final openOrdersCount = dlcOpenOrdersCount(state.orders);
+    final liveOrdersCount = dlcLiveOrdersCount(state.orders);
+    final closedOrdersCount =
+        state.orders.where(isDlcClosedOrder).length;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1536,31 +1619,25 @@ class _OverviewPanel extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 8),
+        _OverviewSummaryCardsRow(
+          walletPnlSats: state.walletPnlSats,
+          openOrdersCount: openOrdersCount,
+          liveOrdersCount: liveOrdersCount,
+          closedOrdersCount: closedOrdersCount,
+          walletRegistered: state.auth != null,
+        ),
+        const SizedBox(height: 8),
         _BarStatCard(
           title: 'Balance split',
+          subtitle: state.auth == null
+              ? null
+              : 'Coordinator-visible balances. Sync wallet UTXOs to reconcile '
+                  'after funding or settlement broadcasts.',
           leftLabel: 'Available',
           leftValue: state.availableBalanceSat ?? 0,
           rightLabel: 'Reserved',
           rightValue: state.reservedBalanceSat ?? 0,
           leftRatio: total <= 0 ? 0 : available / total,
-        ),
-        const SizedBox(height: 8),
-        _BarStatCard(
-          title: 'Order status mix',
-          leftLabel: 'Open',
-          leftValue: openCount.toInt(),
-          rightLabel: 'Live',
-          rightValue: liveCount.toInt(),
-          leftRatio: inOrders <= 0 ? 0 : openCount / inOrders,
-        ),
-        const SizedBox(height: 8),
-        _BarStatCard(
-          title: 'Settlement progress',
-          leftLabel: 'Closed',
-          leftValue: closedCount.toInt(),
-          rightLabel: 'Non-closed',
-          rightValue: (openCount + liveCount).toInt(),
-          leftRatio: inOrders <= 0 ? 0 : closedCount / inOrders,
         ),
         const SizedBox(height: 8),
         Card(
@@ -1743,9 +1820,184 @@ class _OverviewPanel extends StatelessWidget {
   }
 }
 
+class _OverviewSummaryCardsRow extends StatelessWidget {
+  const _OverviewSummaryCardsRow({
+    required this.walletPnlSats,
+    required this.openOrdersCount,
+    required this.liveOrdersCount,
+    required this.closedOrdersCount,
+    required this.walletRegistered,
+  });
+
+  final int? walletPnlSats;
+  final int openOrdersCount;
+  final int liveOrdersCount;
+  final int closedOrdersCount;
+  final bool walletRegistered;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final pnlValue = walletRegistered && walletPnlSats != null
+        ? dlcFormatGroupedSatoshis(walletPnlSats!.abs())
+        : '—';
+    final pnlPrefix = walletPnlSats != null && walletPnlSats! > 0 ? '+' : '';
+    final pnlColor = walletRegistered && walletPnlSats != null
+        ? _simulationPnlValueColor(context, walletPnlSats!)
+        : theme.colorScheme.onSurfaceVariant;
+
+    return Row(
+      children: [
+        Expanded(
+          child: _OverviewSquareStatCard(
+            label: 'Wallet PnL',
+            value: walletRegistered && walletPnlSats != null
+                ? '$pnlPrefix$pnlValue'
+                : pnlValue,
+            valueSuffix: walletRegistered && walletPnlSats != null ? 'sats' : null,
+            valueColor: pnlColor,
+          ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: _OverviewOrdersStatCard(
+            openOrdersCount: openOrdersCount,
+            liveOrdersCount: liveOrdersCount,
+            closedOrdersCount: closedOrdersCount,
+            walletRegistered: walletRegistered,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _OverviewOrdersStatCard extends StatelessWidget {
+  const _OverviewOrdersStatCard({
+    required this.openOrdersCount,
+    required this.liveOrdersCount,
+    required this.closedOrdersCount,
+    required this.walletRegistered,
+  });
+
+  final int openOrdersCount;
+  final int liveOrdersCount;
+  final int closedOrdersCount;
+  final bool walletRegistered;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final dash = '—';
+    final countsLine = walletRegistered
+        ? '$openOrdersCount / $liveOrdersCount / $closedOrdersCount'
+        : '$dash / $dash / $dash';
+
+    return AspectRatio(
+      aspectRatio: 1,
+      child: Card(
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  'Open / Live / Closed',
+                  textAlign: TextAlign.center,
+                  style: theme.textTheme.labelLarge?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  countsLine,
+                  textAlign: TextAlign.center,
+                  style: theme.textTheme.headlineMedium?.copyWith(
+                    fontWeight: FontWeight.w700,
+                    height: 1.05,
+                    color: theme.colorScheme.onSurface,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _OverviewSquareStatCard extends StatelessWidget {
+  const _OverviewSquareStatCard({
+    required this.label,
+    required this.value,
+    this.valueSuffix,
+    this.valueColor,
+  });
+
+  final String label;
+  final String value;
+  final String? valueSuffix;
+  final Color? valueColor;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return AspectRatio(
+      aspectRatio: 1,
+      child: Card(
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text(
+                  label,
+                  textAlign: TextAlign.center,
+                  style: theme.textTheme.labelLarge?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  value,
+                  textAlign: TextAlign.center,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.headlineMedium?.copyWith(
+                    fontWeight: FontWeight.w700,
+                    height: 1.05,
+                    color: valueColor,
+                  ),
+                ),
+                if (valueSuffix != null) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    valueSuffix!,
+                    textAlign: TextAlign.center,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _BarStatCard extends StatelessWidget {
   const _BarStatCard({
     required this.title,
+    this.subtitle,
     required this.leftLabel,
     required this.leftValue,
     required this.rightLabel,
@@ -1754,6 +2006,7 @@ class _BarStatCard extends StatelessWidget {
   });
 
   final String title;
+  final String? subtitle;
   final String leftLabel;
   final int leftValue;
   final String rightLabel;
@@ -1763,6 +2016,7 @@ class _BarStatCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final ratio = leftRatio.clamp(0, 1).toDouble();
+    final theme = Theme.of(context);
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(12),
@@ -1771,10 +2025,19 @@ class _BarStatCard extends StatelessWidget {
           children: [
             Text(
               title,
-              style: Theme.of(
-                context,
-              ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
+              style: theme.textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.w600,
+              ),
             ),
+            if (subtitle != null) ...[
+              const SizedBox(height: 4),
+              Text(
+                subtitle!,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ],
             const SizedBox(height: 8),
             LinearProgressIndicator(value: ratio),
             const SizedBox(height: 8),
@@ -1894,36 +2157,33 @@ class _CompactOrderEntry extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 2),
-                Wrap(
-                  spacing: 10,
-                  runSpacing: 2,
+                Row(
                   children: [
-                    _OrderMetric(
-                      label: 'Seller collateral',
-                      value: dlcFormatOrderSellerCollateral(order),
+                    Text(
+                      _formatOrderSide(order.side),
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: _orderSideHighlightColor(order.side) ??
+                            colorScheme.onSurfaceVariant,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
-                    _OrderMetric(
-                      label: 'Contracts',
-                      value: order.quantity == null
-                          ? '-'
-                          : _formatDecimalInput(order.quantity!),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                      child: Container(
+                        width: 1,
+                        height: 14,
+                        color: colorScheme.outlineVariant,
+                      ),
                     ),
-                    _OrderMetric(
-                      label: 'Premium in this contract',
-                      value: dlcFormatOrderPremiumPerContract(order),
-                    ),
-                    _OrderMetric(
-                      label: 'Side',
-                      value: _formatOrderSide(order.side),
-                    ),
-                    _OrderMetric(
-                      label: 'Role',
-                      value: formatDlcOrderRole(order),
-                    ),
-                    _OrderMetric(label: 'Status', value: order.status),
-                    _OrderMetric(
-                      label: 'Created',
-                      value: _formatOrderDate(order.createdAt),
+                    Expanded(
+                      child: Text(
+                        'Created: ${_formatOrderDate(order.createdAt)}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: colorScheme.onSurfaceVariant,
+                        ),
+                      ),
                     ),
                   ],
                 ),
@@ -1931,19 +2191,10 @@ class _CompactOrderEntry extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 6),
-          Column(
+          Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Text(
-                'Actions',
-                style: theme.textTheme.labelSmall?.copyWith(
-                  color: colorScheme.onSurfaceVariant,
-                ),
-              ),
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  if (order.inFlightPhase != null) ...[
+              if (order.inFlightPhase != null) ...[
                     IconButton(
                       visualDensity: VisualDensity.compact,
                       tooltip: 'In progress',
@@ -1982,26 +2233,11 @@ class _CompactOrderEntry extends StatelessWidget {
                           : () => _confirmCancelOrder(context, order),
                       icon: const Icon(Icons.close, size: 20),
                     ),
-                ],
-              ),
             ],
           ),
         ],
       ),
     );
-  }
-}
-
-class _OrderMetric extends StatelessWidget {
-  const _OrderMetric({required this.label, required this.value});
-
-  final String label;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Text('$label: $value', style: theme.textTheme.bodySmall);
   }
 }
 
@@ -2141,6 +2377,80 @@ String _formatUsdStrike(double strike) {
   return '\$$formatted';
 }
 
+List<double> _strikeOptionsForState(DlcState state) {
+  return dlcStrikesForOrderbook(
+    templateInstrumentId: state.selectedInstrumentId,
+    suggestedStrikePrices: state.suggestedStrikePrices,
+  );
+}
+
+/// Strike selector for Create order (same strikes as the orderbook summary table).
+class _CreateOrderStrikeField extends StatelessWidget {
+  const _CreateOrderStrikeField({required this.state});
+
+  final DlcState state;
+
+  @override
+  Widget build(BuildContext context) {
+    final cubit = context.read<DlcCubit>();
+    final strikes = _strikeOptionsForState(state);
+    final usesTemplate = dlcInstrumentUsesStrikeTemplate(
+      state.selectedInstrumentId,
+    );
+    if (state.selectedInstrumentId == null) {
+      return const SizedBox.shrink();
+    }
+
+    final selectedStrike =
+        state.strikePrice != null && strikes.contains(state.strikePrice)
+        ? state.strikePrice
+        : null;
+
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Expanded(
+          child: DropdownButtonFormField<double>(
+            key: ValueKey<double?>(selectedStrike),
+            initialValue: selectedStrike,
+            isExpanded: true,
+            items: strikes
+                .map(
+                  (strike) => DropdownMenuItem(
+                    value: strike,
+                    child: Text(_formatUsdStrike(strike)),
+                  ),
+                )
+                .toList(),
+            onChanged: state.loading || strikes.isEmpty
+                ? null
+                : (value) => cubit.setStrikePrice(value),
+            decoration: InputDecoration(
+              labelText: 'Strike',
+              helperText: strikes.isEmpty
+                  ? (state.btcUsdSpotPrice == null
+                        ? 'Refresh to load strike suggestions.'
+                        : 'Around spot ${_formatUsdStrike(state.btcUsdSpotPrice!)} in \$1,000 steps.')
+                  : null,
+              errorText: state.strikePriceError,
+            ),
+          ),
+        ),
+        if (usesTemplate) ...[
+          const SizedBox(width: 8),
+          IconButton.filledTonal(
+            tooltip: 'Refresh strikes',
+            onPressed: state.loading
+                ? null
+                : () => cubit.refreshStrikePrices(),
+            icon: const Icon(Icons.refresh),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
 String _formatDecimalInput(double value) {
   return value.toStringAsFixed(8).replaceFirst(RegExp(r'\.?0+$'), '');
 }
@@ -2168,6 +2478,13 @@ String _formatOrderSide(String? side) {
   return side;
 }
 
+Color? _orderSideHighlightColor(String? side) {
+  final normalized = side?.toLowerCase();
+  if (normalized == 'buy') return const Color(0xFF1B5E20);
+  if (normalized == 'sell') return const Color(0xFFB71C1C);
+  return null;
+}
+
 String _formatEstimatedPremiumSats(double totalSats) {
   if (totalSats.isNaN || totalSats.isInfinite || totalSats < 0) return '-';
   return '${dlcFormatGroupedSatoshis(totalSats.round())} satoshis';
@@ -2176,6 +2493,306 @@ String _formatEstimatedPremiumSats(double totalSats) {
 String _orderbookQuantityLabel(Map<String, dynamic> row) {
   final q = row['quantity'] ?? row['amount'];
   return q?.toString() ?? '-';
+}
+
+String _formatOrderbookPremiumCell(int? premiumSats) {
+  if (premiumSats == null) return '-';
+  return dlcFormatGroupedSatoshis(premiumSats);
+}
+
+Future<void> _showOrderbookPremiumInfoDialog(BuildContext context) {
+  return showDialog<void>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: const Text('Ask and bid prices'),
+      content: Text(
+        'The price shown is the premium for one full contract. The final premium is the premium per contract multiplied by the number of contracts.'
+        'One contract is equivalent to one Bitcoin (100,000,000 satoshis).',
+        style: Theme.of(ctx).textTheme.bodyMedium,
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(ctx).pop(),
+          child: const Text('OK'),
+        ),
+      ],
+    ),
+  );
+}
+
+/// One row per strike: best ask (lowest) and best bid (highest) premium.
+class _StrikeOrderbookSummaryTable extends StatelessWidget {
+  const _StrikeOrderbookSummaryTable({
+    required this.theme,
+    required this.colorScheme,
+    required this.snapshots,
+    required this.onStrikeTap,
+  });
+
+  final ThemeData theme;
+  final ColorScheme colorScheme;
+  final List<DlcStrikeOrderbookSnapshot> snapshots;
+  final void Function(DlcStrikeOrderbookSnapshot snapshot) onStrikeTap;
+
+  @override
+  Widget build(BuildContext context) {
+    if (snapshots.isEmpty) {
+      return Text(
+        'No strikes available. Refresh to load strike suggestions.',
+        style: theme.textTheme.bodySmall?.copyWith(
+          color: colorScheme.onSurfaceVariant,
+        ),
+      );
+    }
+
+    final borderColor = colorScheme.outlineVariant.withValues(alpha: 0.65);
+    final headerStyle = theme.textTheme.labelLarge?.copyWith(
+      fontWeight: FontWeight.w600,
+    );
+    final askColor = const Color(0xFFB71C1C);
+    final bidColor = const Color(0xFF1B5E20);
+
+    return Table(
+      columnWidths: const {
+        0: FlexColumnWidth(1.1),
+        1: FlexColumnWidth(1),
+        2: FlexColumnWidth(1),
+      },
+      border: TableBorder(
+        horizontalInside: BorderSide(color: borderColor),
+        bottom: BorderSide(color: borderColor),
+        verticalInside: BorderSide(color: borderColor),
+      ),
+      children: [
+        TableRow(
+          decoration: BoxDecoration(color: colorScheme.surfaceContainerHighest),
+          children: [
+            _summaryHeaderCell('Strike', headerStyle),
+            _summaryHeaderCell(
+              'Ask',
+              headerStyle,
+              color: askColor,
+              onInfoTap: () => _showOrderbookPremiumInfoDialog(context),
+            ),
+            _summaryHeaderCell(
+              'Bid',
+              headerStyle,
+              color: bidColor,
+              onInfoTap: () => _showOrderbookPremiumInfoDialog(context),
+            ),
+          ],
+        ),
+        ...snapshots.map((snapshot) {
+          return TableRow(
+            children: [
+              _summaryDataCell(
+                onTap: () => onStrikeTap(snapshot),
+                child: Text(
+                  _formatUsdStrike(snapshot.strikePrice),
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+              _summaryDataCell(
+                onTap: () => onStrikeTap(snapshot),
+                child: Text(
+                  _formatOrderbookPremiumCell(snapshot.lowestAskPremiumSats),
+                  style: theme.textTheme.bodyMedium?.copyWith(color: askColor),
+                ),
+              ),
+              _summaryDataCell(
+                onTap: () => onStrikeTap(snapshot),
+                child: Text(
+                  _formatOrderbookPremiumCell(snapshot.highestBidPremiumSats),
+                  style: theme.textTheme.bodyMedium?.copyWith(color: bidColor),
+                ),
+              ),
+            ],
+          );
+        }),
+      ],
+    );
+  }
+
+  Widget _summaryHeaderCell(
+    String label,
+    TextStyle? style, {
+    Color? color,
+    VoidCallback? onInfoTap,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(label, style: style?.copyWith(color: color)),
+          if (onInfoTap != null) ...[
+            const SizedBox(width: 2),
+            IconButton(
+              visualDensity: VisualDensity.compact,
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+              tooltip: 'Premium per contract',
+              icon: Icon(
+                Icons.info_outline,
+                size: 16,
+                color: color ?? colorScheme.onSurfaceVariant,
+              ),
+              onPressed: onInfoTap,
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _summaryDataCell({
+    required VoidCallback onTap,
+    required Widget child,
+  }) {
+    return TableCell(
+      verticalAlignment: TableCellVerticalAlignment.middle,
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          child: child,
+        ),
+      ),
+    );
+  }
+}
+
+Future<void> _showStrikeOrderbookDetailDialog({
+  required BuildContext context,
+  required DlcState state,
+  required Map<String, dynamic>? selectedInstrument,
+  required DlcStrikeOrderbookSnapshot snapshot,
+  required void Function({
+    required double strikePrice,
+    required bool isAskRow,
+    required Map<String, dynamic> row,
+  })
+  onDepthRowTap,
+  required VoidCallback onOwnOrdersInfoTap,
+}) {
+  final templateId = state.selectedInstrumentId;
+  if (templateId == null) return Future.value();
+
+  final resolvedId = dlcInstrumentIdWithStrike(templateId, snapshot.strikePrice);
+  final expiry = selectedInstrument != null
+      ? dlcInstrumentExpiresAt(selectedInstrument)
+      : null;
+  final expiryText = expiry != null
+      ? '${DateFormat.yMMMd().add_Hm().format(expiry.toUtc())} UTC'
+      : null;
+  final theme = Theme.of(context);
+  final colorScheme = theme.colorScheme;
+
+  return showDialog<void>(
+    context: context,
+    builder: (dialogContext) {
+      return AlertDialog(
+        title: Text(dlcInstrumentDisplayId(resolvedId)),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                if (expiryText != null)
+                  Text(
+                    'Maturity: $expiryText',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                const SizedBox(height: 16),
+                _OrderbookSideHeader(
+                  label: 'Asks',
+                  color: const Color(0xFFB71C1C),
+                  showInfo: state.auth != null,
+                  onInfoTap: onOwnOrdersInfoTap,
+                ),
+                const SizedBox(height: 6),
+                _OrderbookDepthTable(
+                  theme: theme,
+                  colorScheme: colorScheme,
+                  rows: snapshot.asks,
+                  rowTextColor: const Color(0xFFB71C1C),
+                  onRowTap: (row) {
+                    Navigator.of(dialogContext).pop();
+                    onDepthRowTap(
+                      strikePrice: snapshot.strikePrice,
+                      isAskRow: true,
+                      row: row,
+                    );
+                  },
+                  isOwnWalletRow: state.auth == null
+                      ? null
+                      : (row) => dlcOrderbookRowIsOwnWalletOpenOrder(
+                          row: row,
+                          isAskRow: true,
+                          orders: state.orders,
+                          orderbookSideRows: snapshot.asks,
+                          selectedInstrumentId: resolvedId,
+                        ),
+                ),
+                const SizedBox(height: 14),
+                _OrderbookSideHeader(
+                  label: 'Bids',
+                  color: const Color(0xFF1B5E20),
+                  showInfo: state.auth != null,
+                  onInfoTap: onOwnOrdersInfoTap,
+                ),
+                const SizedBox(height: 6),
+                _OrderbookDepthTable(
+                  theme: theme,
+                  colorScheme: colorScheme,
+                  rows: snapshot.bids,
+                  rowTextColor: const Color(0xFF1B5E20),
+                  onRowTap: (row) {
+                    Navigator.of(dialogContext).pop();
+                    onDepthRowTap(
+                      strikePrice: snapshot.strikePrice,
+                      isAskRow: false,
+                      row: row,
+                    );
+                  },
+                  isOwnWalletRow: state.auth == null
+                      ? null
+                      : (row) => dlcOrderbookRowIsOwnWalletOpenOrder(
+                          row: row,
+                          isAskRow: false,
+                          orders: state.orders,
+                          orderbookSideRows: snapshot.bids,
+                          selectedInstrumentId: resolvedId,
+                        ),
+                ),
+                if (snapshot.asks.isEmpty && snapshot.bids.isEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: Text(
+                      'No open orders at this strike yet.',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('Close'),
+          ),
+        ],
+      );
+    },
+  );
 }
 
 /// Two-column depth table: price vs quantity (no side labels per row).
@@ -2348,6 +2965,7 @@ class _OrderbookInstrumentCard extends StatelessWidget {
   final Map<String, dynamic>? selectedInstrument;
   final bool loading;
   final void Function({
+    required double strikePrice,
     required bool isAskRow,
     required Map<String, dynamic> row,
   })
@@ -2356,23 +2974,9 @@ class _OrderbookInstrumentCard extends StatelessWidget {
 
   Future<void> _openPickerOverlay(BuildContext context) async {
     final cubit = context.read<DlcCubit>();
-    if (cubit.state.suggestedStrikePrices.isEmpty) {
-      await cubit.refreshStrikePrices();
-      if (!context.mounted) return;
-    }
     var latestState = cubit.state;
     DlcOptionType draftOption = latestState.optionType;
     String? draftInstrumentId = latestState.selectedInstrumentId;
-    double? draftStrike =
-        latestState.strikePrice != null &&
-            latestState.suggestedStrikePrices.contains(latestState.strikePrice)
-        ? latestState.strikePrice
-        : latestState.suggestedStrikePrices.isEmpty
-        ? null
-        : latestState.suggestedStrikePrices[latestState
-                  .suggestedStrikePrices
-                  .length ~/
-              2];
     final accepted = await showDialog<bool>(
       context: context,
       builder: (dialogContext) {
@@ -2420,73 +3024,6 @@ class _OrderbookInstrumentCard extends StatelessWidget {
                     decoration: const InputDecoration(labelText: 'Instrument'),
                   ),
                   const SizedBox(height: 10),
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Expanded(
-                        child: DropdownButtonFormField<double>(
-                          initialValue:
-                              draftStrike != null &&
-                                  latestState.suggestedStrikePrices.contains(
-                                    draftStrike,
-                                  )
-                              ? draftStrike
-                              : null,
-                          isExpanded: true,
-                          items: latestState.suggestedStrikePrices
-                              .map(
-                                (strike) => DropdownMenuItem(
-                                  value: strike,
-                                  child: Text(_formatUsdStrike(strike)),
-                                ),
-                              )
-                              .toList(),
-                          onChanged: latestState.suggestedStrikePrices.isEmpty
-                              ? null
-                              : (value) => setState(() => draftStrike = value),
-                          decoration: InputDecoration(
-                            labelText: 'Strike',
-                            helperText: latestState.btcUsdSpotPrice == null
-                                ? 'Refresh to load BTC/USD strike suggestions.'
-                                : 'Around spot ${_formatUsdStrike(latestState.btcUsdSpotPrice!)} in \$1,000 steps.',
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      IconButton.filledTonal(
-                        tooltip: 'Refresh strikes',
-                        onPressed: () async {
-                          await cubit.refreshStrikePrices();
-                          latestState = cubit.state;
-                          setState(() {
-                            draftStrike =
-                                latestState.strikePrice != null &&
-                                    latestState.suggestedStrikePrices.contains(
-                                      latestState.strikePrice,
-                                    )
-                                ? latestState.strikePrice
-                                : latestState.suggestedStrikePrices.isEmpty
-                                ? null
-                                : latestState.suggestedStrikePrices[latestState
-                                          .suggestedStrikePrices
-                                          .length ~/
-                                      2];
-                          });
-                        },
-                        icon: const Icon(Icons.refresh),
-                      ),
-                    ],
-                  ),
-                  if (latestState.strikePriceError != null) ...[
-                    const SizedBox(height: 4),
-                    Text(
-                      latestState.strikePriceError!,
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: Theme.of(context).colorScheme.error,
-                      ),
-                    ),
-                  ],
-                  const SizedBox(height: 10),
                   ToggleButtons(
                     isSelected: [
                       draftOption == DlcOptionType.call,
@@ -2528,10 +3065,10 @@ class _OrderbookInstrumentCard extends StatelessWidget {
       },
     );
     if (accepted == true) {
-      cubit.selectOptionInstrumentAndStrike(
+      await cubit.selectOptionInstrumentAndStrike(
         optionType: draftOption,
         instrumentId: draftInstrumentId,
-        strikePrice: draftStrike,
+        strikePrice: null,
       );
     }
   }
@@ -2543,22 +3080,13 @@ class _OrderbookInstrumentCard extends StatelessWidget {
     final rawId = selectedInstrument != null
         ? dlcInstrumentId(selectedInstrument!)
         : null;
-    final id = rawId == null
-        ? null
-        : dlcInstrumentIdWithStrike(rawId, state.strikePrice);
     final expiry = selectedInstrument != null
         ? dlcInstrumentExpiresAt(selectedInstrument!)
         : null;
     String? optionLabel;
-    String? strikeLabel;
     String? underlyingLabel;
     if (selectedInstrument != null) {
       final metadata = dlcInstrumentMetadata(selectedInstrument!);
-      strikeLabel = rawId != null && rawId.contains('-STRIKE-')
-          ? state.strikePrice == null
-                ? null
-                : dlcNormalizeStrikeToken(state.strikePrice!)
-          : metadata.strike;
       underlyingLabel = metadata.underlying;
       final rawType = (selectedInstrument!['type'] ?? '')
           .toString()
@@ -2618,7 +3146,7 @@ class _OrderbookInstrumentCard extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      if (id != null) ...[
+                      if (rawId != null) ...[
                         RichText(
                           text: TextSpan(
                             style: theme.textTheme.titleMedium?.copyWith(
@@ -2626,7 +3154,7 @@ class _OrderbookInstrumentCard extends StatelessWidget {
                               fontWeight: FontWeight.w700,
                             ),
                             children: [
-                              TextSpan(text: _instrumentDisplayId(id)),
+                              TextSpan(text: _instrumentDisplayId(rawId)),
                               TextSpan(
                                 text: ' (tap to change)',
                                 style: theme.textTheme.labelSmall?.copyWith(
@@ -2644,9 +3172,6 @@ class _OrderbookInstrumentCard extends StatelessWidget {
                               [
                                 ?underlyingLabel,
                                 optionLabel ?? '-',
-                                ?(strikeLabel == null
-                                    ? null
-                                    : 'Strk.: $strikeLabel'),
                                 'Exp.: $expiryText',
                               ].join(' | '),
                               style: theme.textTheme.labelSmall?.copyWith(
@@ -2667,70 +3192,54 @@ class _OrderbookInstrumentCard extends StatelessWidget {
                 ),
               ),
             ),
-            const SizedBox(height: 20),
-            if (id != null) ...[
-              _OrderbookSideHeader(
-                label: 'Asks',
-                color: const Color(0xFFB71C1C),
-                showInfo: state.auth != null,
-                onInfoTap: onOwnOrdersInfoTap,
+            const SizedBox(height: 12),
+            Text(
+              'Tap a strike to view full depth. Premiums are per contract (sats).',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: colorScheme.onSurfaceVariant,
               ),
-              const SizedBox(height: 6),
-              _OrderbookDepthTable(
+            ),
+            const SizedBox(height: 10),
+            if (loading && state.strikeOrderbooks.isEmpty)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 24),
+                child: Center(child: CircularProgressIndicator()),
+              )
+            else if (rawId != null) ...[
+              _StrikeOrderbookSummaryTable(
                 theme: theme,
                 colorScheme: colorScheme,
-                rows: state.orderbookAsks,
-                rowTextColor: const Color(0xFFB71C1C),
-                onRowTap: loading
-                    ? null
-                    : (row) => onDepthRowTap(isAskRow: true, row: row),
-                isOwnWalletRow: state.auth == null
-                    ? null
-                    : (row) => dlcOrderbookRowIsOwnWalletOpenOrder(
-                        row: row,
-                        isAskRow: true,
-                        orders: state.orders,
-                        orderbookSideRows: state.orderbookAsks,
-                        selectedInstrumentId: id,
-                      ),
+                snapshots: state.strikeOrderbooks,
+                onStrikeTap: loading
+                    ? (_) {}
+                    : (snapshot) {
+                        _showStrikeOrderbookDetailDialog(
+                          context: context,
+                          state: state,
+                          selectedInstrument: selectedInstrument,
+                          snapshot: snapshot,
+                          onDepthRowTap: onDepthRowTap,
+                          onOwnOrdersInfoTap: onOwnOrdersInfoTap,
+                        );
+                      },
               ),
-              const SizedBox(height: 14),
-              _OrderbookSideHeader(
-                label: 'Bids',
-                color: const Color(0xFF1B5E20),
-                showInfo: state.auth != null,
-                onInfoTap: onOwnOrdersInfoTap,
-              ),
-              const SizedBox(height: 6),
-              _OrderbookDepthTable(
-                theme: theme,
-                colorScheme: colorScheme,
-                rows: state.orderbookBids,
-                rowTextColor: const Color(0xFF1B5E20),
-                onRowTap: loading
-                    ? null
-                    : (row) => onDepthRowTap(isAskRow: false, row: row),
-                isOwnWalletRow: state.auth == null
-                    ? null
-                    : (row) => dlcOrderbookRowIsOwnWalletOpenOrder(
-                        row: row,
-                        isAskRow: false,
-                        orders: state.orders,
-                        orderbookSideRows: state.orderbookBids,
-                        selectedInstrumentId: id,
-                      ),
-              ),
-            ],
-            if (id != null &&
-                state.orderbookAsks.isEmpty &&
-                state.orderbookBids.isEmpty)
-              Padding(
-                padding: const EdgeInsets.only(top: 8),
-                child: Text(
-                  'No open orders on this book yet.',
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: colorScheme.onSurfaceVariant,
+              if (!loading &&
+                  state.strikeOrderbooks.isEmpty &&
+                  state.suggestedStrikePrices.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Text(
+                    'No liquidity on any strike yet.',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: colorScheme.onSurfaceVariant,
+                    ),
                   ),
+                ),
+            ] else if (rawId == null)
+              Text(
+                'Select an instrument to view strikes.',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: colorScheme.onSurfaceVariant,
                 ),
               ),
           ],

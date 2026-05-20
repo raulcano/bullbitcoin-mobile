@@ -4,6 +4,7 @@ import 'package:bb_mobile/core/utils/uint_8_list_x.dart';
 import 'package:bb_mobile/features/dlc/domain/dlc_cet_adaptor_signing.dart';
 import 'package:bb_mobile/features/dlc/domain/dlc_compact_ecdsa.dart';
 import 'package:bb_mobile/features/dlc/domain/dlc_ecdsa_der.dart';
+import 'package:bb_mobile/features/dlc/domain/dlc_funding_key_resolve.dart';
 import 'package:bb_mobile/features/dlc/domain/dlc_funding_signature_wire.dart';
 import 'package:convert/convert.dart';
 import 'package:crypto/crypto.dart' as crypto;
@@ -16,15 +17,25 @@ class DlcContextSigningIsolateInput {
   final String contextTag;
   final String? refundSighashHex;
   final List<String> fundingInputSighashesHex;
-  final List<DlcFundingInputSigningMaterial> fundingInputKeys;
+  final List<int> seedBytes;
+  final String walletDerivationPath;
+  final String scriptTypeName;
+  final List<DlcWalletUtxoHint> utxoHints;
+  final List<String> fundingInputAddresses;
+  final List<String> fundingInputOutpoints;
 
   const DlcContextSigningIsolateInput({
     required this.cetSigningJobs,
     required this.fundingPrivateKey,
     required this.contextTag,
+    required this.seedBytes,
+    required this.walletDerivationPath,
+    required this.scriptTypeName,
     this.refundSighashHex,
     this.fundingInputSighashesHex = const [],
-    this.fundingInputKeys = const [],
+    this.utxoHints = const [],
+    this.fundingInputAddresses = const [],
+    this.fundingInputOutpoints = const [],
   });
 
   Map<String, dynamic> toJson() => {
@@ -33,7 +44,12 @@ class DlcContextSigningIsolateInput {
     'context_tag': contextTag,
     'refund_sighash_hex': refundSighashHex,
     'funding_input_sighashes_hex': fundingInputSighashesHex,
-    'funding_input_keys': fundingInputKeys.map((k) => k.toJson()).toList(),
+    'seed_bytes': seedBytes,
+    'wallet_derivation_path': walletDerivationPath,
+    'script_type_name': scriptTypeName,
+    'utxo_hints': utxoHints.map((u) => u.toJson()).toList(),
+    'funding_input_addresses': fundingInputAddresses,
+    'funding_input_outpoints': fundingInputOutpoints,
   };
 
   factory DlcContextSigningIsolateInput.fromJson(Map<String, dynamic> json) {
@@ -48,14 +64,22 @@ class DlcContextSigningIsolateInput {
       fundingInputSighashesHex:
           (json['funding_input_sighashes_hex'] as List<dynamic>? ?? const [])
               .cast<String>(),
-      fundingInputKeys:
-          (json['funding_input_keys'] as List<dynamic>? ?? const [])
-              .map(
-                (e) => DlcFundingInputSigningMaterial.fromJson(
-                  Map<String, dynamic>.from(e as Map),
-                ),
-              )
-              .toList(),
+      seedBytes: (json['seed_bytes'] as List<dynamic>).cast<int>(),
+      walletDerivationPath: json['wallet_derivation_path'] as String,
+      scriptTypeName: json['script_type_name'] as String,
+      utxoHints: (json['utxo_hints'] as List<dynamic>? ?? const [])
+          .map(
+            (e) => DlcWalletUtxoHint.fromJson(
+              Map<String, dynamic>.from(e as Map),
+            ),
+          )
+          .toList(),
+      fundingInputAddresses:
+          (json['funding_input_addresses'] as List<dynamic>? ?? const [])
+              .cast<String>(),
+      fundingInputOutpoints:
+          (json['funding_input_outpoints'] as List<dynamic>? ?? const [])
+              .cast<String>(),
     );
   }
 }
@@ -138,18 +162,28 @@ Map<String, dynamic> _signDlcContextIsolate(Map<String, dynamic> raw) {
   );
   final refundSignatureHex = refundCompact.toHexString();
 
+  final fundingMaterials = resolveFundingInputSigningMaterials(
+    seedBytes: Uint8List.fromList(input.seedBytes),
+    walletDerivationPath: input.walletDerivationPath,
+    scriptTypeName: input.scriptTypeName,
+    utxoHints: input.utxoHints,
+    fundingInputSighashesHex: input.fundingInputSighashesHex,
+    fundingInputAddresses: input.fundingInputAddresses,
+    fundingInputOutpoints: input.fundingInputOutpoints,
+  );
+
   final witnessStacks = <Uint8List>[];
-  for (var i = 0; i < input.fundingInputSighashesHex.length; i++) {
+  for (var i = 0; i < fundingMaterials.length; i++) {
     final sighash = Uint8List.fromList(hex.decode(input.fundingInputSighashesHex[i]));
-    final material = input.fundingInputKeys[i];
+    final material = fundingMaterials[i];
     final compact = signCompactSecp256k1(
-      privateKey32: Uint8List.fromList(material.privateKey),
+      privateKey32: material.privateKey,
       digest32: sighash,
     );
     witnessStacks.add(
       encodeP2wpkhFundingWitnessStack(
         derSignatureHex: compactSecp256k1SignatureToDerHex(compact),
-        compressedPubkey33: Uint8List.fromList(material.publicKey),
+        compressedPubkey33: material.publicKey,
       ),
     );
   }

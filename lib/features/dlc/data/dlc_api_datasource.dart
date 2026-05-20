@@ -249,7 +249,7 @@ class DlcApiDatasource {
   }
 
   Future<Map<String, dynamic>> simulateOptionPayout({
-    required String token,
+    String? token,
     required Map<String, dynamic> payload,
   }) async {
     await _ensureBaseUrl();
@@ -257,7 +257,9 @@ class DlcApiDatasource {
       final response = await _dio.post(
         '/orders/option-payout-simulation',
         data: payload,
-        options: Options(headers: {'Authorization': 'Bearer $token'}),
+        options: token == null
+            ? null
+            : Options(headers: {'Authorization': 'Bearer $token'}),
       );
       final data = response.data;
       if (data is Map<String, dynamic>) return data;
@@ -591,16 +593,40 @@ class DlcApiDatasource {
   }
 
   String _readApiError(DioException exception) {
-    final data = exception.response?.data;
-    if (data is Map<String, dynamic>) {
+    final code = exception.response?.statusCode;
+    final method = exception.requestOptions.method;
+    final path = exception.requestOptions.uri.path;
+    final endpointHint = path.isEmpty ? '' : ' [$method $path]';
+    final prefix = code == null ? '' : 'HTTP $code: ';
+    final body = _extractBodyMessage(exception.response?.data);
+    if (body != null && body.isNotEmpty) {
+      return '$prefix$body$endpointHint';
+    }
+    final typeHint = _dioTypeHint(exception);
+    final dioMessage = exception.message?.trim();
+    final detail = (dioMessage != null && dioMessage.isNotEmpty)
+        ? (typeHint == null ? dioMessage : '$typeHint: $dioMessage')
+        : (typeHint ?? 'DLC API request failed');
+    return '$prefix$detail$endpointHint';
+  }
+
+  /// Best-effort extraction of a human readable error from a coordinator
+  /// response body. Supports FastAPI-style `detail`, `message`, `error`, and
+  /// also raw string / list bodies so non-standard error shapes still surface.
+  String? _extractBodyMessage(dynamic data) {
+    if (data == null) return null;
+    if (data is String) {
+      final trimmed = data.trim();
+      return trimmed.isEmpty ? null : trimmed;
+    }
+    if (data is Map) {
       final detail = data['detail'];
-      if (detail is Map<String, dynamic>) {
+      if (detail is Map) {
         final reason = detail['reason']?.toString();
         final message = detail['message']?.toString();
-        if (reason != null && message != null) {
-          return '$reason: $message';
-        }
+        if (reason != null && message != null) return '$reason: $message';
         if (message != null) return message;
+        if (reason != null) return reason;
       }
       if (detail is List) {
         final messages = detail
@@ -615,14 +641,48 @@ class DlcApiDatasource {
               }
               return item.toString();
             })
+            .where((part) => part.isNotEmpty)
             .join('; ');
         if (messages.isNotEmpty) return messages;
       }
-      if (detail is String) return detail;
-      if (data['message'] is String) return data['message'] as String;
+      if (detail is String && detail.isNotEmpty) return detail;
+      for (final key in const ['message', 'error', 'reason', 'msg']) {
+        final value = data[key];
+        if (value is String && value.isNotEmpty) return value;
+      }
+      // Fall back to compact serialization so non-standard shapes still show.
+      final snippet = data.toString();
+      if (snippet.isNotEmpty && snippet != '{}') {
+        return snippet.length > 240
+            ? '${snippet.substring(0, 240)}…'
+            : snippet;
+      }
     }
-    final code = exception.response?.statusCode;
-    final prefix = code == null ? '' : 'HTTP $code: ';
-    return '$prefix${exception.message ?? 'DLC API request failed'}';
+    if (data is List && data.isNotEmpty) {
+      return data.map((e) => e.toString()).join('; ');
+    }
+    return null;
+  }
+
+  /// Human readable hint derived from [DioException.type] so timeouts and
+  /// connection errors are not collapsed to a generic "request failed" message.
+  String? _dioTypeHint(DioException exception) {
+    switch (exception.type) {
+      case DioExceptionType.connectionTimeout:
+        return 'Connection timeout';
+      case DioExceptionType.sendTimeout:
+        return 'Send timeout';
+      case DioExceptionType.receiveTimeout:
+        return 'Receive timeout';
+      case DioExceptionType.connectionError:
+        return 'Connection error';
+      case DioExceptionType.badCertificate:
+        return 'Bad TLS certificate';
+      case DioExceptionType.cancel:
+        return 'Request cancelled';
+      case DioExceptionType.badResponse:
+      case DioExceptionType.unknown:
+        return null;
+    }
   }
 }

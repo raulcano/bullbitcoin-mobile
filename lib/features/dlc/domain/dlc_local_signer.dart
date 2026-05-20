@@ -1,9 +1,7 @@
 import 'dart:convert';
-import 'dart:typed_data';
 
 import 'package:bb_mobile/core/seed/data/repository/seed_repository.dart';
 import 'package:bb_mobile/core/settings/domain/settings_entity.dart';
-import 'package:bb_mobile/core/utils/address_script_conversions.dart';
 import 'package:bb_mobile/core/wallet/domain/entities/wallet_address.dart';
 import 'package:bb_mobile/core/utils/uint_8_list_x.dart';
 import 'package:bb_mobile/core/wallet/data/repositories/wallet_repository.dart';
@@ -11,6 +9,8 @@ import 'package:bb_mobile/core/wallet/domain/entities/wallet.dart';
 import 'package:bb_mobile/core/wallet/domain/entities/wallet_utxo.dart';
 import 'package:bb_mobile/features/dlc/domain/dlc_context_signing_isolate.dart';
 import 'package:bb_mobile/features/dlc/domain/dlc_ecdsa_der.dart';
+import 'package:bb_mobile/features/dlc/domain/dlc_funding_key_resolve.dart';
+import 'package:flutter/foundation.dart';
 import 'package:bb_mobile/features/dlc/domain/dlc_models.dart';
 import 'package:bip32_keys/bip32_keys.dart';
 import 'package:crypto/crypto.dart';
@@ -226,19 +226,21 @@ class DlcLocalSigner {
     final fundingHashes =
         (context['funding_input_sighashes_hex'] as List<dynamic>? ?? const [])
             .cast<String>();
-    final fundingInputKeys = await _resolveFundingInputSigningKeys(
-      wallet: wallet,
-      walletUtxos: walletUtxos,
-      fundingInputSighashesHex: fundingHashes,
-      fundingInputAddresses: (context['funding_input_addresses'] as List<dynamic>? ??
-              const [])
-          .map((item) => item.toString())
-          .toList(growable: false),
-      fundingInputOutpoints: (context['funding_input_outpoints'] as List<dynamic>? ??
-              const [])
-          .map((item) => item.toString())
-          .toList(growable: false),
-    );
+    final fundingAddresses = (context['funding_input_addresses'] as List<dynamic>? ??
+            const [])
+        .map((item) => item.toString())
+        .toList(growable: false);
+    final fundingOutpoints = (context['funding_input_outpoints'] as List<dynamic>? ??
+            const [])
+        .map((item) => item.toString())
+        .toList(growable: false);
+
+    if (kDebugMode) {
+      debugPrint(
+        'DLC signing ($contextTag): ${jobs.length} CET adaptor jobs, '
+        '${fundingHashes.length} funding inputs',
+      );
+    }
 
     final signed = await runDlcContextSigningOffMainThread(
       DlcContextSigningIsolateInput(
@@ -247,16 +249,14 @@ class DlcLocalSigner {
             .toList(growable: false),
         fundingPrivateKey: fundingPrivateKey,
         contextTag: contextTag,
+        seedBytes: seed.bytes,
+        walletDerivationPath: wallet.derivationPath,
+        scriptTypeName: wallet.scriptType.name,
         refundSighashHex: context['refund_sighash_hex'] as String?,
         fundingInputSighashesHex: fundingHashes,
-        fundingInputKeys: fundingInputKeys
-            .map(
-              (k) => DlcFundingInputSigningMaterial(
-                privateKey: k.private!,
-                publicKey: k.public,
-              ),
-            )
-            .toList(growable: false),
+        utxoHints: _utxoHintsForSigning(walletUtxos),
+        fundingInputAddresses: fundingAddresses,
+        fundingInputOutpoints: fundingOutpoints,
       ),
     );
 
@@ -270,113 +270,21 @@ class DlcLocalSigner {
 
   String fundingDerivationPath(Wallet wallet) => '${wallet.derivationPath}/0/0';
 
-  Future<List<Bip32Keys>> _resolveFundingInputSigningKeys({
-    required Wallet wallet,
-    required List<WalletUtxo> walletUtxos,
-    required List<String> fundingInputSighashesHex,
-    required List<String> fundingInputAddresses,
-    required List<String> fundingInputOutpoints,
-  }) async {
-    final seed = await _seedRepository.get(wallet.masterFingerprint);
-    final root = Bip32Keys.fromSeed(seed.bytes);
-    final cache = <String, Bip32Keys>{};
-    final addressToKey = <String, Bip32Keys>{};
-
-    for (final utxo in walletUtxos.whereType<BitcoinWalletUtxo>()) {
-      if (utxo.isFrozen || utxo.address.isEmpty) continue;
-      final key = _findKeyForUtxo(
-        root: root,
-        wallet: wallet,
-        utxo: utxo,
-        cache: cache,
-      );
-      if (key != null) {
-        addressToKey[utxo.address] = key;
-      }
-    }
-
-    final keys = <Bip32Keys>[];
-    for (var i = 0; i < fundingInputSighashesHex.length; i++) {
-      Bip32Keys? inputKey;
-      if (i < fundingInputAddresses.length) {
-        final address = fundingInputAddresses[i].trim();
-        if (address.isNotEmpty) {
-          inputKey = addressToKey[address];
-          inputKey ??= await _findKeyForAddress(
-            root: root,
-            wallet: wallet,
-            address: address,
-            cache: cache,
-          );
-        }
-      }
-      if (inputKey == null && i < fundingInputOutpoints.length) {
-        final outpoint = fundingInputOutpoints[i].trim();
-        if (outpoint.isNotEmpty) {
-          inputKey = _findKeyForOutpoint(
-            root: root,
-            wallet: wallet,
-            outpoint: outpoint,
-            walletUtxos: walletUtxos,
-            cache: cache,
-          );
-        }
-      }
-      if (inputKey == null) {
-        throw Exception(
-          'No private key for DLC funding input ${i + 1} of '
-          '${fundingInputSighashesHex.length}. Sync wallet UTXOs and retry.',
-        );
-      }
-      keys.add(inputKey);
-    }
-    return keys;
-  }
-
-  Bip32Keys? _findKeyForOutpoint({
-    required Bip32Keys root,
-    required Wallet wallet,
-    required String outpoint,
-    required List<WalletUtxo> walletUtxos,
-    required Map<String, Bip32Keys> cache,
-  }) {
-    final parts = outpoint.split(':');
-    if (parts.length != 2) return null;
-    final txid = parts[0].toLowerCase();
-    final vout = int.tryParse(parts[1]);
-    if (vout == null) return null;
-
-    for (final utxo in walletUtxos.whereType<BitcoinWalletUtxo>()) {
-      if (utxo.txId.toLowerCase() != txid || utxo.vout != vout) continue;
-      return _findKeyForUtxo(
-        root: root,
-        wallet: wallet,
-        utxo: utxo,
-        cache: cache,
-      );
-    }
-    return null;
-  }
-
-  Future<Bip32Keys?> _findKeyForAddress({
-    required Bip32Keys root,
-    required Wallet wallet,
-    required String address,
-    required Map<String, Bip32Keys> cache,
-  }) async {
-    for (final chain in [0, 1]) {
-      for (var index = 0; index < 1000; index++) {
-        final path = '${wallet.derivationPath}/$chain/$index';
-        final key = cache.putIfAbsent(path, () => root.derivePath(path));
-        final script = _scriptPubkeyForWalletKey(wallet, key);
-        final derived = await AddressScriptConversions.bitcoinAddressFromScriptPubkey(
-          script,
-          isTestnet: wallet.isTestnet,
-        );
-        if (derived == address) return key;
-      }
-    }
-    return null;
+  List<DlcWalletUtxoHint> _utxoHintsForSigning(List<WalletUtxo> walletUtxos) {
+    return walletUtxos
+        .whereType<BitcoinWalletUtxo>()
+        .where((u) => !u.isFrozen)
+        .map(
+          (u) => DlcWalletUtxoHint(
+            txId: u.txId,
+            vout: u.vout,
+            scriptPubkey: u.scriptPubkey,
+            address: u.address,
+            addressKeyChain:
+                u.addressKeyChain == WalletAddressKeyChain.internal ? 1 : 0,
+          ),
+        )
+        .toList(growable: false);
   }
 
   Bip32Keys? _findKeyForUtxo({

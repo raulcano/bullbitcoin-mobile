@@ -23,10 +23,15 @@ const dlcLocalPendingOrderIdPrefix = 'local-pending-';
 bool isDlcLocalPendingOrderId(String orderId) =>
     orderId.startsWith(dlcLocalPendingOrderIdPrefix);
 
+/// In-flight phase stored on the order, or derived from coordinator fields.
+DlcOrderInFlightPhase? effectiveOrderInFlightPhase(DlcOrderSummary order) {
+  return order.inFlightPhase ?? resolveOrderInFlightPhase(order);
+}
+
 /// Whether the order row belongs in **Live** (including in-flight matched flow).
 bool orderShowsInLiveSection(DlcOrderSummary order) {
   if (isDlcLiveOrder(order)) return true;
-  switch (order.inFlightPhase) {
+  switch (effectiveOrderInFlightPhase(order)) {
     case DlcOrderInFlightPhase.takerSigningAccept:
     case DlcOrderInFlightPhase.matchedAwaitingTakerAccept:
     case DlcOrderInFlightPhase.makerSigningDlc:
@@ -41,7 +46,18 @@ bool orderShowsInLiveSection(DlcOrderSummary order) {
 bool orderShowsInOpenSection(DlcOrderSummary order) {
   if (orderShowsInLiveSection(order)) return false;
   if (isDlcOpenOrder(order)) return true;
-  return order.inFlightPhase == DlcOrderInFlightPhase.creatingOnCoordinator;
+  return effectiveOrderInFlightPhase(order) ==
+      DlcOrderInFlightPhase.creatingOnCoordinator;
+}
+
+/// Open-order count for Overview and summaries (same rules as My orders → Open).
+int dlcOpenOrdersCount(Iterable<DlcOrderSummary> orders) {
+  return orders.where(orderShowsInOpenSection).length;
+}
+
+/// Live-order count for Overview charts (same rules as My orders → Live).
+int dlcLiveOrdersCount(Iterable<DlcOrderSummary> orders) {
+  return orders.where(orderShowsInLiveSection).length;
 }
 
 bool isMakerAwaitingTakerAccept(DlcOrderSummary order) {

@@ -60,6 +60,69 @@ void main() {
     });
   });
 
+  group('dlcPayoutChartStrikeOutcomeXAxis', () {
+    test('uses min(0.65×strike, 0.65×outcome) and max(1.35×strike, 1.35×outcome)',
+        () {
+      final extents = dlcPayoutChartStrikeOutcomeXAxis(
+        strikeUsd: 100_000,
+        outcomeUsd: 95_000,
+      );
+
+      expect(extents.min, 61_750);
+      expect(extents.max, 135_000);
+    });
+
+    test('call and put use the same x-axis rule', () {
+      final intervals = <DlcPayoutInterval>[
+        for (var i = 0; i < 20; i++)
+          DlcPayoutInterval(
+            index: i,
+            start: i * 10_000,
+            end: (i + 1) * 10_000 - 1,
+            walletPayout: 1_000_000,
+            counterpartyPayout: 0,
+            compressedDigitCount: 1,
+          ),
+      ];
+
+      final callExtents = dlcPayoutChartFocusedXExtents(
+        strikeUsd: 100_000,
+        outcomeUsd: 105_000,
+        intervals: intervals,
+      );
+      final putExtents = dlcPayoutChartFocusedXExtents(
+        strikeUsd: 100_000,
+        outcomeUsd: 95_000,
+        intervals: intervals,
+      );
+
+      expect(callExtents.min, 65_000);
+      expect(callExtents.max, 141_750);
+
+      expect(putExtents.min, 61_750);
+      expect(putExtents.max, 135_000);
+    });
+
+    test('x axis minimum is never below zero', () {
+      final extents = dlcPayoutChartStrikeOutcomeXAxis(
+        strikeUsd: 5_000,
+        outcomeUsd: 4_000,
+      );
+
+      expect(extents.min, greaterThanOrEqualTo(0));
+    });
+
+    test('when outcome exceeds strike, max follows outcome × 1.35', () {
+      final extents = dlcPayoutChartStrikeOutcomeXAxis(
+        strikeUsd: 100_000,
+        outcomeUsd: 120_000,
+      );
+
+      expect(extents.min, 65_000);
+      expect(extents.max, 162_000);
+    });
+  });
+
   group('DlcOptionPayoutSimulationRequest', () {
     test('toJson omits wallet_fee_sats and includes role', () {
       const req = DlcOptionPayoutSimulationRequest(

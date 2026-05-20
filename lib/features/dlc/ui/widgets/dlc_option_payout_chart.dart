@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:bb_mobile/features/dlc/domain/dlc_option_payout_simulation.dart';
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart' show NumberFormat;
 
 /// Wallet payout vs oracle BTC/USD: stepped rounded DLC curve and dashed canonical reference.
 class DlcOptionPayoutChart extends StatelessWidget {
@@ -52,30 +53,32 @@ class DlcOptionPayoutChart extends StatelessWidget {
             ),
           ),
         ),
-        const SizedBox(height: 10),
+        const SizedBox(height: 8),
         Wrap(
-          spacing: 14,
-          runSpacing: 8,
+          spacing: 10,
+          runSpacing: 6,
           children: [
             _LegendChip(
               color: scheme.primary,
-              label: 'Rounded wallet payout',
+              label: 'Actual payout',
               dashed: false,
             ),
             _LegendChip(
               color: scheme.onSurfaceVariant.withValues(alpha: 0.85),
-              label: 'Canonical theoretical payout',
+              label: 'Canonical payout',
               dashed: true,
             ),
             _LegendChip(
               color: scheme.tertiary,
-              label: 'Strike',
+              label:
+                  'Strike (${NumberFormat.decimalPattern().format(strikeUsd)} USD)',
               dashed: false,
               thin: true,
             ),
             _LegendChip(
               color: scheme.secondary,
-              label: 'Outcome price',
+              label:
+                  'Outcome (${NumberFormat.decimalPattern().format(outcomeUsd)} USD)',
               dashed: false,
               thin: true,
             ),
@@ -105,8 +108,8 @@ class _LegendChip extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
         SizedBox(
-          width: 22,
-          height: thin ? 2 : 3,
+          width: 16,
+          height: thin ? 1.5 : 2.5,
           child: dashed
               ? CustomPaint(
                   painter: _MiniDashPainter(color: color),
@@ -118,10 +121,10 @@ class _LegendChip extends StatelessWidget {
                   ),
                 ),
         ),
-        const SizedBox(width: 6),
+        const SizedBox(width: 4),
         Text(
           label,
-          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+          style: Theme.of(context).textTheme.labelSmall?.copyWith(
                 color: Theme.of(context).colorScheme.onSurfaceVariant,
               ),
         ),
@@ -192,40 +195,26 @@ class _DlcPayoutChartPainter extends CustomPainter {
       size.height - _bottomPad,
     );
 
-    var xMin = strikeUsd.toDouble();
-    var xMax = strikeUsd.toDouble();
-    for (final iv in intervals) {
-      xMin = math.min(xMin, iv.start.toDouble());
-      xMax = math.max(xMax, iv.end.toDouble());
-    }
-    for (final p in canonicalPoints) {
-      xMin = math.min(xMin, p.x.toDouble());
-      xMax = math.max(xMax, p.x.toDouble());
-    }
-    xMin = math.min(xMin, outcomeUsd.toDouble());
-    xMax = math.max(xMax, outcomeUsd.toDouble());
-    if (outcomeBand != null) {
-      xMin = math.min(xMin, outcomeBand!.start.toDouble());
-      xMax = math.max(xMax, outcomeBand!.end.toDouble());
-    }
-
+    final focusedX = dlcPayoutChartFocusedXExtents(
+      strikeUsd: strikeUsd,
+      outcomeUsd: outcomeUsd,
+      outcomeBand: outcomeBand,
+      intervals: intervals,
+    );
+    var xMin = focusedX.min;
+    var xMax = focusedX.max;
     if (xMax <= xMin) {
       xMax = xMin + 1;
     }
-    final xPad = (xMax - xMin) * 0.04 + 1;
-    xMin -= xPad;
-    xMax += xPad;
 
-    var yMin = 0.0;
-    var yMax = 1.0;
-    for (final iv in intervals) {
-      yMin = math.min(yMin, iv.walletPayout.toDouble());
-      yMax = math.max(yMax, iv.walletPayout.toDouble());
-    }
-    for (final p in canonicalPoints) {
-      yMin = math.min(yMin, p.walletPayout.toDouble());
-      yMax = math.max(yMax, p.walletPayout.toDouble());
-    }
+    final focusedY = dlcPayoutChartYExtentsForX(
+      xMin: xMin,
+      xMax: xMax,
+      intervals: intervals,
+      canonicalPoints: canonicalPoints,
+    );
+    var yMin = focusedY.min;
+    var yMax = focusedY.max;
     if (yMax <= yMin) {
       yMax = yMin + 1;
     }
@@ -297,6 +286,9 @@ class _DlcPayoutChartPainter extends CustomPainter {
       'Expiry',
     );
 
+    canvas.save();
+    canvas.clipRect(chart);
+
     // Stepped rounded wallet payout
     if (intervals.isNotEmpty) {
       final stepped = Path();
@@ -347,6 +339,8 @@ class _DlcPayoutChartPainter extends CustomPainter {
         );
       }
     }
+
+    canvas.restore();
 
     canvas.drawRect(
       chart,

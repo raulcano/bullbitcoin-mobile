@@ -69,6 +69,32 @@ DlcInstrumentMetadata dlcInstrumentMetadata(Map<String, dynamic> instrument) {
   );
 }
 
+bool dlcInstrumentUsesStrikeTemplate(String? instrumentId) {
+  return instrumentId != null && instrumentId.contains('-STRIKE-');
+}
+
+/// Strikes to show as orderbook rows for the selected template instrument.
+List<double> dlcStrikesForOrderbook({
+  required String? templateInstrumentId,
+  required List<double> suggestedStrikePrices,
+}) {
+  final id = templateInstrumentId;
+  if (id == null || id.isEmpty) return const [];
+  if (dlcInstrumentUsesStrikeTemplate(id)) {
+    final strikes = List<double>.from(suggestedStrikePrices)..sort();
+    return strikes;
+  }
+  final parts = id.split('-');
+  if (parts.length >= 3) {
+    final token = parts[2];
+    if (token != 'STRIKE') {
+      final parsed = double.tryParse(token);
+      if (parsed != null) return [parsed];
+    }
+  }
+  return const [];
+}
+
 String dlcInstrumentIdWithStrike(String instrumentId, double? strikePrice) {
   if (!instrumentId.contains('-STRIKE-') || strikePrice == null) {
     return instrumentId;
@@ -77,6 +103,21 @@ String dlcInstrumentIdWithStrike(String instrumentId, double? strikePrice) {
     '-STRIKE-',
     '-${dlcNormalizeStrikeToken(strikePrice)}-',
   );
+}
+
+/// Whole USD/BTC strike from a resolved instrument id, or null when unknown.
+int? dlcStrikeUsdFromInstrumentId(String? instrumentId) {
+  if (instrumentId == null || instrumentId.isEmpty) return null;
+  final meta = dlcInstrumentMetadata(<String, dynamic>{
+    'instrument_id': instrumentId,
+  });
+  final token = meta.strike;
+  if (token == null || token.isEmpty || token.toUpperCase() == 'STRIKE') {
+    return null;
+  }
+  final parsed = double.tryParse(token);
+  if (parsed == null || parsed < 1) return null;
+  return parsed.round();
 }
 
 String dlcNormalizeStrikeToken(double strike) {

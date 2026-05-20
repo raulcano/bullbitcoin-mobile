@@ -21,6 +21,9 @@ void main() {
         ],
         fundingPrivateKey: priv,
         contextTag: 'accept',
+        seedBytes: List.filled(64, 1),
+        walletDerivationPath: "m/84'/0'/0'",
+        scriptTypeName: 'bip84',
         refundSighashHex: 'aa' * 32,
       ),
     );
