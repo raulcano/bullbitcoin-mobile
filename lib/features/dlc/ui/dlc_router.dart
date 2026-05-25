@@ -17,8 +17,12 @@ class DlcRouter {
     path: DlcRoute.dlcHome.path,
     pageBuilder: (context, state) => NoTransitionPage(
       key: state.pageKey,
-      child: BlocProvider(
-        create: (_) => locator<DlcCubit>(),
+      // Use BlocProvider.value so navigating away from /dlcs does NOT close
+      // the cubit. The locator owns the cubit's lifecycle and keeps the
+      // active wallet session, orderbook, and background polling alive when
+      // the user visits other parts of the app and returns here.
+      child: BlocProvider<DlcCubit>.value(
+        value: locator<DlcCubit>(),
         child: const DlcHomeScreen(),
       ),
     ),

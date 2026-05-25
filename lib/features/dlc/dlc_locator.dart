@@ -107,7 +107,11 @@ class DlcLocator {
       ),
     );
 
-    locator.registerFactory<DlcCubit>(
+    // Lazy singleton so the active DLC wallet session, orders, and the
+    // background polling timer survive navigation away from /dlcs and back.
+    // The DlcRouter pairs this with `BlocProvider.value` so the route does
+    // not close the cubit when the page is popped.
+    locator.registerLazySingleton<DlcCubit>(
       () => DlcCubit(repository: locator<DlcRepository>()),
     );
   }

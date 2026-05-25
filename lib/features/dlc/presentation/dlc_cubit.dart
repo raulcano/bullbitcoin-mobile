@@ -69,6 +69,20 @@ class DlcCubit extends Cubit<DlcState> {
   }
 
   Future<void> load() async {
+    // The cubit is a lazy singleton, so this can be called on the initial
+    // navigation to /dlcs AND on every re-entry from another tab. On re-entry
+    // the cubit already has the active wallet + catalog hydrated — avoid
+    // re-running the full `_reloadActiveWalletData` flow (which emits
+    // `loading: true` and triggers a spinner flash). Instead let background
+    // polling and pull-to-refresh keep things fresh, and just nudge the
+    // overview tab for any UTXO/balance changes that happened while away.
+    final alreadyHydrated = state.instruments.isNotEmpty;
+    if (alreadyHydrated) {
+      if (state.auth != null) {
+        unawaited(refreshOverviewTab());
+      }
+      return;
+    }
     if (state.auth != null) {
       await _reloadActiveWalletData();
       return;

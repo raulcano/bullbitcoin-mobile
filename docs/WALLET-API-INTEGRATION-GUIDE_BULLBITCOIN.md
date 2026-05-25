@@ -1745,6 +1745,273 @@ Private keys are loaded from `SeedRepository.get(wallet.masterFingerprint)` insi
 
 Heavy CET adaptor signing runs off the UI thread via Flutter `compute()` to keep `DlcHomeScreen` responsive during large `cet_signing_job_count` values.
 
+## Signing Implementation Reference
+
+This section is a complete byte-level recipe for the three artifacts the wallet must produce — **CET adaptor signatures**, **refund signature**, and **funding-input witness signatures** — when given a coordinator signing context. Use it as the spec when porting the signing layer to a new client or language.
+
+### Architectural model
+
+The wallet does not rebuild CETs, oracle adaptor points, or sighashes. The coordinator hands the wallet a **signing context** (the same shape for taker accept and maker sign) containing:
+
+- `cet_signing_jobs[]` — for every (CET, outcome path), the pair `{ message_hash_hex, adaptor_point_hex }`
+- `cet_signing_job_count` — must equal `cet_signing_jobs.length`
+- `refund_sighash_hex` — 32-byte BIP143 sighash of the refund transaction's funding input
+- `funding_input_sighashes_hex[]` — one BIP143 sighash per funding input owned by the **current party** (taker's funding inputs for accept, maker's for sign)
+- `funding_input_outpoints[]` — `txid:vout` per funding input (parallel to the sighashes)
+- `funding_input_addresses[]` — wallet address per funding input (parallel to the sighashes)
+
+The wallet returns:
+
+- `cet_adaptor_signatures_hex[]` — one **162-byte** wire entry per `cet_signing_jobs` entry, **same order**
+- `refund_signature_hex` — **64-byte** compact ECDSA `r || s`, low-`s`
+- `funding_signatures_hex[]` — exactly **one** entry: the serialized DLC `FundingSignature` container wrapping all per-input P2WPKH witness stacks
+
+### CET adaptor signature wire formats
+
+Each CET adaptor signature is 162 bytes. The **DLC v0 wire layout** is:
+
+```text
+R(33 compressed) || s_a(32 BE) || R_a(33 compressed) || proof(64)
+```
+
+The field order **inside the crypto primitives** (matches `secp256k1-zkp`) is different:
+
+```text
+R(33 compressed) || R_a(33 compressed) || s_a(32 BE) || proof(64)
+```
+
+Implement two distinct serializers on the same struct — `serializeWire()` for the wire and `toEncryptedAdaptorBytes()` for the primitives. Mixing the orders is the most common interop bug.
+
+Component sizes:
+
+| Field | Size | Notes |
+| --- | --- | --- |
+| `R` | 33 | Compressed point, `k · Y`. Must not be infinity. |
+| `R_a` | 33 | Compressed point, `k · G`. Must not be infinity. |
+| `s_a` | 32 | Big-endian scalar in `[0, n-1]`. |
+| `proof` | 64 | DLEQ proof `b(32) || c(32)`. |
+
+### ECDSA adaptor encryption algorithm
+
+Inputs per CET job:
+
+- `x` — 32-byte funding private key (the wallet's DLC funding key derived once per signing call)
+- `Y` — compressed adaptor point from `adaptor_point_hex`
+- `m` — 32-byte message hash from `message_hash_hex`
+
+Algorithm:
+
+```text
+k    = sample_nonce(comp(Y) || m || x)        // retry until k != 0
+R_a  = k · G
+R    = k · Y
+r    = R.x mod n
+s_a  = k^-1 · (scalar(m) + r · scalar(x)) mod n
+proof = DLEQ_prove(k, R_a, Y, R)              // 64 bytes
+```
+
+Where `scalar(bytes) = int.fromBigEndian(bytes) mod n` and `n` is the secp256k1 curve order.
+
+Validation — throw on any of:
+
+- `len(x) == 32 && x != 0`
+- `len(m) == 32`
+- `Y` is a valid compressed point and not infinity
+- `R != INFINITY && R_a != INFINITY`
+- `0 <= s_a < n`
+
+### Nonce generation
+
+```text
+sample_nonce(data) = scalar(SHA256(data || os.urandom(32)))
+```
+
+Do **not** use RFC6979 here. Mix 32 bytes of CSPRNG randomness per derivation. Expose a deterministic override only for tests.
+
+### DLEQ proof
+
+`DLEQ_prove(x, X, Y, Z)` proves `X = x · G ∧ Z = x · Y`:
+
+```text
+DLEQ_TAG_PREFIX = SHA256("DLEQ") || SHA256("DLEQ")        // 64 bytes, cached
+
+a   = sample_nonce(
+        DLEQ_TAG_PREFIX || comp(X) || comp(Y) || comp(Z) || x_be32
+      ) mod n
+A_G = a · G
+A_Y = a · Y
+b   = scalar(SHA256(
+        DLEQ_TAG_PREFIX || comp(X) || comp(Y) || comp(Z) || comp(A_G) || comp(A_Y)
+      )) mod n
+c   = (a + b · x) mod n
+
+proof = b_be32 || c_be32                                  // 64 bytes
+```
+
+### Refund signature
+
+The coordinator gives a 32-byte refund sighash. Sign it with the wallet's **DLC funding key** using **RFC6979 deterministic ECDSA**, low-`s` normalized, and return the **64-byte compact** signature `r || s` as **128-hex chars** — no DER, no `SIGHASH_ALL` byte:
+
+```text
+sig    = ECDSA_RFC6979_sign(privateKey, sighash)          // (r, s)
+s_low  = s > n/2 ? n - s : s                              // BIP62
+out    = be32(r) || be32(s_low)
+```
+
+### Funding witness signatures
+
+This is the most error-prone artifact. The coordinator expects exactly **one** entry in `funding_signatures_hex[]`: a single serialized DLC `FundingSignature` that wraps **all** P2WPKH witness stacks for the funding inputs this party owns.
+
+Per funding input (assume P2WPKH / BIP84):
+
+1. Sign `funding_input_sighashes_hex[i]` with the **UTXO's** private key (the one controlling that outpoint, not the DLC funding key) — RFC6979 ECDSA, low-`s`, compact 64 bytes.
+2. Convert compact `r || s` to **DER**: strip leading zeros from each scalar, prepend `0x00` if the high bit is set, then wrap as `30 len 02 rlen r 02 slen s`.
+3. Append `0x01` (`SIGHASH_ALL`).
+4. Build the witness stack `[der + sighash, compressed_pubkey_33]`.
+
+Witness-stack encoding (DLC `WitnessStack`):
+
+```text
+bigsize(n_elements) ||
+  foreach element:
+    bigsize(element_len) || element_bytes
+```
+
+`FundingSignature` container (parallel to inputs):
+
+```text
+bigsize(n_stacks) || stack0 || stack1 || ...
+```
+
+`BigSize` is the DLC variable-length integer:
+
+| Range | Encoding |
+| --- | --- |
+| `< 0xfd` | `u8` |
+| `<= 0xffff` | `0xfd || u16_be` |
+| `<= 0xffffffff` | `0xfe || u32_be` |
+| larger | `0xff || u64_be` |
+
+The full container hex is the single `funding_signatures_hex[0]`. Empty input list → empty `funding_signatures_hex[]` array.
+
+### Funding-input key resolution
+
+Each funding input is owned by a wallet UTXO. To sign, you need that UTXO's BIP32 private key. The coordinator gives `funding_input_addresses[]` and `funding_input_outpoints[]` (parallel to the sighash list). Algorithm:
+
+1. Take all wallet UTXOs (`txid`, `vout`, `scriptPubkey`, `address`, `chain` flag for receive/change).
+2. **Pre-filter** to UTXOs referenced by the coordinator's outpoints **or** addresses.
+3. For each kept UTXO, derive `{walletPath}/{0|1}/{index}` until `scriptPubKey(key) == utxo.scriptPubkey`. Use the UTXO's `chain` flag (0 receive, 1 change) to avoid scanning the wrong branch.
+4. Match raw script bytes — **do not** convert derived keys back to address strings:
+   - `bip84` → `0x00 0x14 || HASH160(pubkey)`
+   - `bip49` → `0xa9 0x14 || HASH160(0x00 0x14 || HASH160(pubkey)) || 0x87`
+   - `bip44` → `0x76 0xa9 0x14 || HASH160(pubkey) || 0x88 0xac`
+5. Cache derived keys by path within one signing call.
+
+If any funding input cannot be matched to a wallet key, throw before submission — never send partial artifacts.
+
+### Off-main-thread execution
+
+CET adaptor signing is `N × secp256k1` plus DLEQ; for a few dozen CETs this is hundreds of milliseconds and **freezes the UI** if run on the main thread. Plus funding-input key resolution scans BIP32 paths.
+
+Move the whole signing batch to a worker (Flutter `compute()`, native background thread, etc.). The worker takes **only serializable inputs** — no native key handles:
+
+```text
+{
+  cet_signing_jobs:            [...],            // copied verbatim from coordinator
+  funding_private_key:         bytes(32),        // DLC funding key (adaptors + refund)
+  refund_sighash_hex:          string,
+  context_tag:                 "accept" | "sign",
+
+  // For per-input witness signatures:
+  seed_bytes:                  bytes,            // wallet seed for BIP32 derivation
+  wallet_derivation_path:      string,           // e.g. "m/84'/0'/0'"
+  script_type_name:            "bip84" | "bip49" | "bip44",
+  utxo_hints: [
+    { tx_id, vout, script_pubkey, address, address_key_chain }
+  ],
+  funding_input_sighashes_hex: [string],
+  funding_input_addresses:     [string],
+  funding_input_outpoints:     [string],
+}
+```
+
+Worker output:
+
+```text
+{
+  cet_adaptor_signatures_hex: [string],   // 324-hex (162 bytes) per entry
+  refund_signature_hex:        string,    // 128-hex (64 bytes)
+  funding_signatures_hex:      [string],  // exactly 1 entry (or 0 if no inputs)
+}
+```
+
+Inside the worker, do everything: CET adaptors, refund ECDSA, funding-input key resolution, funding ECDSA, witness-stack and `FundingSignature` serialization. **Do not** resolve UTXO keys on the UI thread first — the wallet UTXO scan itself is slow.
+
+### Required primitives in the host language
+
+| Primitive | Usage |
+| --- | --- |
+| secp256k1 point ops (parse/serialize compressed 33B, x-only lift, point add, scalar mul, point negate) | All signing |
+| Mod-`n` BigInt arithmetic incl. modular inverse | Adaptor `s_a`, DLEQ `c`, refund/funding ECDSA |
+| SHA-256 + HMAC-SHA-256 (RFC6979) | Sighash composition, deterministic ECDSA |
+| BIP32 derivation exposing private scalar **and** compressed public bytes | Funding-input key resolution |
+| CSPRNG (32 bytes per nonce derivation) | `sample_nonce` |
+| Hex encode/decode | Wire I/O |
+
+### Test vectors
+
+Verify correctness before integrating:
+
+- Standard ECDSA adaptor vectors (`tests/test_vectors/ecdsa-adaptor.json` in `dlc-coordinator`) — covers verify, decrypt, recover, high-`s`, and bad-proof paths. Get all of these passing before going further.
+- A known adaptor-point vector for the oracle digit `7`:
+  - oracle x-only pubkey `c3b1d269...c2741`
+  - oracle x-only nonce `509c2a8c...6a67f3`
+  - `isSigned = false`
+  - → expected `Y = 0324afa2587b3965c4132a135c63ff5a8cc932e1cedda1c4f9c2858c24b34039ae`.
+- Wire-codec round-trip: random `(R, R_a, s_a, proof)` → `serializeWire()` → `deserializeWire()` → equal bytes; verify the field-order swap rule (`wire[33:65] == primitive[66:98]` for `s_a`, `wire[65:98] == primitive[33:66]` for `R_a`).
+
+### Performance notes
+
+- **Maker tends to be slower than taker** when the offer side has more funding UTXOs than the accept side. CET counts are usually identical (the coordinator caps both at `MATCH_TIME_CET_LIMIT`, default 12 payout intervals).
+- Wins, in order: (a) move signing to a worker, (b) match `scriptPubKey` bytes instead of converting derived keys back to addresses, (c) pre-filter wallet UTXOs to those referenced by `funding_input_outpoints`/`funding_input_addresses`, (d) cache derived BIP32 keys by path within one signing call.
+- Avoid any async I/O inside the funding-key scan loop. Address conversion per derived key was the original main-thread bottleneck — replacing it with raw script comparison is roughly 100× faster for typical wallets.
+
+### Error model and ordering
+
+- The order of `cet_adaptor_signatures_hex[]` must match the order of `cet_signing_jobs[]`. Do not parallelize in a way that reorders.
+- Witness stacks must be in the same order as `funding_input_sighashes_hex[]`.
+- `funding_signatures_hex[]` always has length 1 (one container, many stacks inside) — or length 0 if there are no funding inputs.
+- On any single failure (bad point, bad length, missing UTXO key, scalar out of range) the whole signing call must throw — never submit a partial result to the coordinator.
+
+### How we did this in BullBitcoin
+
+The signing layer lives in `lib/features/dlc/domain/` (orchestration) and `lib/core/dlc/data/crypto/` (primitives), with a small Flutter `compute()` worker:
+
+| File | Role |
+| --- | --- |
+| `lib/core/dlc/data/crypto/ecdsa_adaptor.dart` | `adaptorEncrypt`, `adaptorVerify`, `adaptorDecrypt`, `adaptorRecoverDecryptionKey` |
+| `lib/core/dlc/data/crypto/dleq.dart` | `dleqProve`, `dleqVerify` (cached `DLEQ_TAG_PREFIX`) |
+| `lib/core/dlc/data/crypto/nonce_generator.dart` | `sampleNonce`, `adaptorSigningNonce` (CSPRNG + retry on `k == 0`); `testNonceOverride` for vectors |
+| `lib/core/dlc/data/crypto/secp256k1_point.dart` | Compressed/x-only point ops, point negate, scalar mul over `pointycastle` |
+| `lib/core/dlc/data/crypto/low_s.dart` | BIP62 normalization |
+| `lib/core/dlc/data/models/ecdsa_adaptor_signature_model.dart` | Both `serializeWire()` and `toEncryptedAdaptorBytes()` |
+| `lib/features/dlc/domain/dlc_cet_adaptor_signing.dart` | Loops coordinator `cet_signing_jobs` → 162-byte wire hex |
+| `lib/features/dlc/domain/dlc_compact_ecdsa.dart` | RFC6979 compact secp256k1 sign, low-`s` |
+| `lib/features/dlc/domain/dlc_ecdsa_der.dart` | Compact → DER conversion |
+| `lib/features/dlc/domain/dlc_funding_signature_wire.dart` | `BigSize`, `WitnessStack`, `FundingSignature` container |
+| `lib/features/dlc/domain/dlc_funding_key_resolve.dart` | UTXO-hint → BIP32 key by script-pubkey match |
+| `lib/features/dlc/domain/dlc_context_signing_isolate.dart` | Flutter `compute()` entrypoint, JSON-serializable input/output |
+| `lib/features/dlc/domain/dlc_local_signer.dart` | `signDlcContext()` — assembles input, dispatches to isolate, returns `DlcSigningResult` |
+
+Notable conventions:
+
+- DLC funding key derivation path: `{wallet.derivationPath}/0/0`.
+- The wallet UTXO list is pre-filtered to outpoints/addresses referenced by the coordinator before being passed to the isolate (avoids serializing the whole wallet UTXO set).
+- Funding-input script matching uses raw byte comparison (`bip84` / `bip49` / `bip44` template); no `bdk` address conversion in the hot loop.
+- All signing throws `DlcSigningException` subclasses (`InvalidPrivateKeyException`, `InvalidPointException`, `InvalidAdaptorSignatureWireException`, `InvalidDleqProofException`, `DecryptionKeyMismatchException`, `OracleAttestationMismatchException`); the local signer wraps and propagates instead of submitting partial results.
+- A `kDebugMode` log emits `DLC signing (accept|sign): <N> CET adaptor jobs, <M> funding inputs` before invoking the worker — this is how the "maker is slower than taker" pattern is diagnosed on device.
+- Tests in `test/core/dlc/` cover the standard adaptor vectors, DLEQ round-trip + tamper, BIP62 low-`s`, wire-codec symmetry, and the coordinator-shape job → 162-byte hex pipeline.
+
 ## Validation The Wallet Should Perform
 
 Before signing any context, the wallet should validate as much as practical:

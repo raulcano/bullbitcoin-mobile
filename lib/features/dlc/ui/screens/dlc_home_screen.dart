@@ -349,7 +349,7 @@ class _DlcHomeScreenState extends State<DlcHomeScreen> {
                           _OrderGroupSection(
                             title: 'Live orders',
                             subtitle:
-                                'Pending accept, filled, or settlement in progress',
+                                'Orders filled, negotiating and awaiting maturity',
                             orders: liveOrders,
                             processingOrder: state.processingOrder,
                           ),
@@ -497,7 +497,7 @@ class _DlcHomeTopNav extends StatelessWidget {
 
   static const List<_DlcNavSpec> _tabs = [
     _DlcNavSpec(0, Icons.dashboard_outlined, 'Overview'),
-    _DlcNavSpec(1, Icons.menu_book_outlined, 'Orderbook'),
+    _DlcNavSpec(1, Icons.candlestick_chart_outlined, 'Trade'),
     _DlcNavSpec(2, Icons.list_alt_outlined, 'My Orders'),
     _DlcNavSpec(3, Icons.calculate_outlined, 'Simulate'),
   ];
@@ -1629,10 +1629,7 @@ class _OverviewPanel extends StatelessWidget {
         const SizedBox(height: 8),
         _BarStatCard(
           title: 'Balance split',
-          subtitle: state.auth == null
-              ? null
-              : 'Coordinator-visible balances. Sync wallet UTXOs to reconcile '
-                  'after funding or settlement broadcasts.',
+          
           leftLabel: 'Available',
           leftValue: state.availableBalanceSat ?? 0,
           rightLabel: 'Reserved',
@@ -1664,7 +1661,7 @@ class _OverviewPanel extends StatelessWidget {
                 ),
                 const SizedBox(height: 6),
                 Text(
-                  'DLC options can lock collateral and depend on oracle outcomes. '
+                  'DLC options lock collateral and depend on oracle outcomes. '
                   'Only extended public keys and signatures are sent to the coordinator; '
                   'seeds and private keys stay on this device.',
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
@@ -2041,12 +2038,17 @@ class _BarStatCard extends StatelessWidget {
             const SizedBox(height: 8),
             LinearProgressIndicator(value: ratio),
             const SizedBox(height: 8),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text('$leftLabel: $leftValue'),
-                Text('$rightLabel: $rightValue'),
-              ],
+            Builder(
+              builder: (_) {
+                final fmt = NumberFormat.decimalPattern();
+                return Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text('$leftLabel: ${fmt.format(leftValue)}'),
+                    Text('$rightLabel: ${fmt.format(rightValue)}'),
+                  ],
+                );
+              },
             ),
           ],
         ),
@@ -3119,7 +3121,7 @@ class _OrderbookInstrumentCard extends StatelessWidget {
           children: [
             Row(
               children: [
-                Icon(Icons.menu_book_outlined, color: colorScheme.primary),
+                Icon(Icons.candlestick_chart_outlined, color: colorScheme.primary),
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
