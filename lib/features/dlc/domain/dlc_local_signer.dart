@@ -1,7 +1,9 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:bb_mobile/core/seed/data/repository/seed_repository.dart';
 import 'package:bb_mobile/core/settings/domain/settings_entity.dart';
+import 'package:bb_mobile/core/utils/bip32_derivation.dart';
 import 'package:bb_mobile/core/wallet/domain/entities/wallet_address.dart';
 import 'package:bb_mobile/core/utils/uint_8_list_x.dart';
 import 'package:bb_mobile/core/wallet/data/repositories/wallet_repository.dart';
@@ -84,17 +86,34 @@ class DlcLocalSigner {
     );
   }
 
+  /// Account-level xpub sent to `POST /auth/wallet`, matching the key that signs
+  /// the registration nonce (network-native prefix: vpub/tpub/zpub/…).
+  Future<String> registrationXpubForCoordinator({required Wallet wallet}) async {
+    final seed = await _seedRepository.get(wallet.masterFingerprint);
+    final accountKey = _deriveWalletAccountKey(
+      seedBytes: seed.bytes,
+      wallet: wallet,
+    );
+    // Must use the neutered (public) key. [Bip32Keys.convert] only re-prefixes
+    // version bytes; on a private key that would still encode xpriv payload and
+    // break coordinator xpub signature verification.
+    return accountKey.neutered.convert(
+      wallet.scriptType.getXpubType(wallet.network),
+    );
+  }
+
   Future<String> signNonceProof({
     required Wallet wallet,
     required String nonce,
   }) async {
-    final seed = await _seedRepository.get(wallet.masterFingerprint);
-    final key = _deriveWalletAccountKey(seedBytes: seed.bytes, wallet: wallet);
-    final hash = sha256.convert(utf8.encode(nonce)).bytes;
-    final signature = Uint8List.fromList(
-      key.sign(Uint8List.fromList(hash)) as List<int>,
+    final candidates = await signNonceProofCandidates(
+      wallet: wallet,
+      nonce: nonce,
     );
-    return compactSecp256k1SignatureToDerHex(signature, includeHashType: true);
+    if (candidates.isEmpty) {
+      throw Exception('Could not build DLC registration nonce signature.');
+    }
+    return candidates.first;
   }
 
   Future<List<String>> signNonceProofCandidates({
@@ -106,42 +125,22 @@ class DlcLocalSigner {
       seedBytes: seed.bytes,
       wallet: wallet,
     );
-    final interactionKey = _deriveDlcKey(
-      seedBytes: seed.bytes,
-      derivationPath: fundingDerivationPath(wallet),
-    );
-    final nonceHex = utf8.encode(nonce).toHexString();
+    final nonceUtf8 = utf8.encode(nonce);
 
     Uint8List signDigest(Bip32Keys key, List<int> digest) =>
         Uint8List.fromList(key.sign(Uint8List.fromList(digest)) as List<int>);
 
-    final signatures = <String>[
-      compactSecp256k1SignatureToDerHex(
-        signDigest(accountKey, sha256.convert(utf8.encode(nonce)).bytes),
-        includeHashType: true,
-      ),
-      compactSecp256k1SignatureToDerHex(
-        signDigest(accountKey, sha256.convert(utf8.encode(nonceHex)).bytes),
-        includeHashType: true,
-      ),
-      compactSecp256k1SignatureToDerHex(
-        signDigest(
-          accountKey,
-          sha256.convert(sha256.convert(utf8.encode(nonce)).bytes).bytes,
-        ),
-        includeHashType: true,
-      ),
-      compactSecp256k1SignatureToDerHex(
-        signDigest(interactionKey, sha256.convert(utf8.encode(nonce)).bytes),
-        includeHashType: true,
-      ),
-      compactSecp256k1SignatureToDerHex(
-        signDigest(interactionKey, sha256.convert(utf8.encode(nonceHex)).bytes),
-        includeHashType: true,
-      ),
-    ];
+    String derSig(Bip32Keys key, List<int> digest) =>
+        compactSecp256k1SignatureToDerHex(
+          signDigest(key, digest),
+          includeHashType: true,
+        );
 
-    return signatures.toSet().toList(growable: false);
+    // Coordinator (bitcoinlib): double-SHA256(utf8(nonce)), account xpub key,
+    // DER + trailing SIGHASH_ALL (0x01) — required by Signature.parse_bytes().
+    final bitcoinlibDigest = _doubleSha256(nonceUtf8);
+
+    return [derSig(accountKey, bitcoinlibDigest)];
   }
 
   Future<String> signUtxoProof({
@@ -358,6 +357,11 @@ class DlcLocalSigner {
     final root = Bip32Keys.fromSeed(seedBytes);
     // This key corresponds to the wallet xpub and is used for auth nonce proof.
     return root.derivePath(wallet.derivationPath);
+  }
+
+  List<int> _doubleSha256(List<int> input) {
+    final first = sha256.convert(input).bytes;
+    return sha256.convert(first).bytes;
   }
 
 }

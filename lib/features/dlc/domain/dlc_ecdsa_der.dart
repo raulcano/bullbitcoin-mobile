@@ -3,6 +3,11 @@ import 'dart:typed_data';
 import 'package:bb_mobile/core/utils/uint_8_list_x.dart';
 
 /// DER-encodes a 64-byte compact secp256k1 signature (BIP340-style r||s).
+///
+/// When [includeHashType] is true, appends `SIGHASH_ALL` (`0x01`). The DLC
+/// coordinator's bitcoinlib verifier expects this trailing byte for registration
+/// proofs (`POST /auth/wallet`); pure DER without it is mis-parsed as truncated
+/// ASN.1 and fails with `InvalidDerSignature`.
 String compactSecp256k1SignatureToDerHex(
   Uint8List compactSignature, {
   bool includeHashType = false,
@@ -13,36 +18,34 @@ String compactSecp256k1SignatureToDerHex(
     );
   }
 
-  final r = _trimLeadingZeros(compactSignature.sublist(0, 32));
-  final s = _trimLeadingZeros(compactSignature.sublist(32, 64));
-  final rDer = (r.isNotEmpty && (r.first & 0x80) != 0)
-      ? Uint8List.fromList([0, ...r])
-      : Uint8List.fromList(r);
-  final sDer = (s.isNotEmpty && (s.first & 0x80) != 0)
-      ? Uint8List.fromList([0, ...s])
-      : Uint8List.fromList(s);
-
-  final sequenceLen = 2 + rDer.length + 2 + sDer.length;
-  final der = Uint8List.fromList([
-    0x30,
-    sequenceLen,
+  final rBody = _derIntegerBody(compactSignature.sublist(0, 32));
+  final sBody = _derIntegerBody(compactSignature.sublist(32, 64));
+  final inner = Uint8List.fromList([
     0x02,
-    rDer.length,
-    ...rDer,
+    rBody.length,
+    ...rBody,
     0x02,
-    sDer.length,
-    ...sDer,
+    sBody.length,
+    ...sBody,
   ]);
-  final withHashType = includeHashType
+  final der = Uint8List.fromList([0x30, inner.length, ...inner]);
+  final out = includeHashType
       ? Uint8List.fromList([...der, 0x01])
       : der;
-  return withHashType.toHexString();
+  return out.toHexString();
 }
 
-List<int> _trimLeadingZeros(List<int> bytes) {
+/// Strips leading zeros, then prepends `0x00` when the high bit is set (bitcoinlib).
+Uint8List _derIntegerBody(List<int> bigEndian32) {
   var index = 0;
-  while (index < bytes.length - 1 && bytes[index] == 0) {
+  while (index < bigEndian32.length && bigEndian32[index] == 0) {
     index++;
   }
-  return bytes.sublist(index);
+  final trimmed = index == bigEndian32.length
+      ? Uint8List.fromList([0])
+      : Uint8List.fromList(bigEndian32.sublist(index));
+  if (trimmed[0] & 0x80 != 0) {
+    return Uint8List.fromList([0, ...trimmed]);
+  }
+  return trimmed;
 }

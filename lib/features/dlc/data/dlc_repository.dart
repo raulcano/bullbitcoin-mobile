@@ -215,9 +215,9 @@ class DlcRepository {
       environment: env,
       walletOriginId: walletOriginId,
     );
-    final coordinatorXpub = Bip32Derivation.getBip32Xpub(
-      wallet.xpub,
-    ).toBase58();
+    final coordinatorXpub = await _localSigner.registrationXpubForCoordinator(
+      wallet: wallet,
+    );
 
     final noncePayload = await _datasource.createNonce();
     final nonce = noncePayload['nonce'] as String? ?? '';

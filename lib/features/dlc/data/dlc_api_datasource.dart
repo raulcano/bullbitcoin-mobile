@@ -112,11 +112,37 @@ class DlcApiDatasource {
     Duration receiveTimeout = const Duration(seconds: 90),
     Duration sendTimeout = const Duration(seconds: 30),
   }) {
-    return Options(
-      headers: {'Authorization': 'Bearer $token'},
+    return _partnerOptions(
+      bearerToken: token,
       receiveTimeout: receiveTimeout,
       sendTimeout: sendTimeout,
       extra: skipBackup ? const {'dlc_skip_backup': true} : null,
+    );
+  }
+
+  /// Partner-protected coordinator routes require `X-Partner-Token` (see
+  /// dlc-coordinator `require_partner_token` on auth/instruments/orders).
+  Map<String, String> _partnerHeaders() {
+    final partner = ApiServiceConstants.dlcCoordinatorPartnerToken.trim();
+    if (partner.isEmpty) return const {};
+    return {'X-Partner-Token': partner};
+  }
+
+  Options _partnerOptions({
+    String? bearerToken,
+    Duration? receiveTimeout,
+    Duration? sendTimeout,
+    Map<String, dynamic>? extra,
+  }) {
+    final headers = _partnerHeaders();
+    if (bearerToken != null) {
+      headers['Authorization'] = 'Bearer $bearerToken';
+    }
+    return Options(
+      headers: headers.isEmpty ? null : headers,
+      receiveTimeout: receiveTimeout,
+      sendTimeout: sendTimeout,
+      extra: extra,
     );
   }
 
@@ -193,6 +219,7 @@ class DlcApiDatasource {
       final response = await _dio.post(
         '/auth/nonce',
         data: <String, dynamic>{},
+        options: _partnerOptions(),
       );
       return (response.data as Map<String, dynamic>);
     } on DioException catch (e) {
@@ -218,6 +245,7 @@ class DlcApiDatasource {
           'label': label,
           'utxos': utxos,
         },
+        options: _partnerOptions(),
       );
       return (response.data as Map<String, dynamic>);
     } on DioException catch (e) {
@@ -228,7 +256,10 @@ class DlcApiDatasource {
   Future<List<dynamic>> listInstruments() async {
     await _ensureBaseUrl();
     try {
-      final response = await _dio.get(ApiServiceConstants.dlcInstrumentsListPath);
+      final response = await _dio.get(
+        ApiServiceConstants.dlcInstrumentsListPath,
+        options: _partnerOptions(),
+      );
       return (response.data as List<dynamic>? ?? const []);
     } on DioException catch (e) {
       throw Exception(_readApiError(e));
@@ -238,7 +269,10 @@ class DlcApiDatasource {
   Future<Map<String, dynamic>> getSystemReadiness() async {
     await _ensureBaseUrl();
     try {
-      final response = await _dio.get('/auth/system-readiness');
+      final response = await _dio.get(
+        '/auth/system-readiness',
+        options: _partnerOptions(),
+      );
       final data = response.data;
       if (data is Map<String, dynamic>) return data;
       if (data is Map) return Map<String, dynamic>.from(data);
@@ -257,9 +291,7 @@ class DlcApiDatasource {
       final response = await _dio.post(
         '/orders/option-payout-simulation',
         data: payload,
-        options: token == null
-            ? null
-            : Options(headers: {'Authorization': 'Bearer $token'}),
+        options: _partnerOptions(bearerToken: token),
       );
       final data = response.data;
       if (data is Map<String, dynamic>) return data;
@@ -283,8 +315,8 @@ class DlcApiDatasource {
       final response = await _dio.post(
         '/orders',
         data: payload,
-        options: Options(
-          headers: {'Authorization': 'Bearer $token'},
+        options: _partnerOptions(
+          bearerToken: token,
           // Offer build + match can exceed the default 8s coordinator timeout.
           receiveTimeout: const Duration(seconds: 90),
           sendTimeout: const Duration(seconds: 30),
@@ -307,7 +339,7 @@ class DlcApiDatasource {
     try {
       final response = await _dio.get(
         '/orders',
-        options: Options(headers: {'Authorization': 'Bearer $token'}),
+        options: _partnerOptions(bearerToken: token),
       );
       return (response.data as List<dynamic>? ?? const []);
     } on DioException catch (e) {
@@ -323,7 +355,7 @@ class DlcApiDatasource {
     try {
       final response = await _dio.post(
         '/orders/$orderId/cancel',
-        options: Options(headers: {'Authorization': 'Bearer $token'}),
+        options: _partnerOptions(bearerToken: token),
       );
       final data = response.data;
       if (data is Map<String, dynamic>) return data;
@@ -371,7 +403,7 @@ class DlcApiDatasource {
     try {
       final response = await _dio.get(
         '/orders/$orderId',
-        options: Options(headers: {'Authorization': 'Bearer $token'}),
+        options: _partnerOptions(bearerToken: token),
       );
       return (response.data as Map<String, dynamic>);
     } on DioException catch (e) {
@@ -387,7 +419,7 @@ class DlcApiDatasource {
     try {
       final response = await _dio.get(
         '/auth/wallet/$walletId',
-        options: Options(headers: {'Authorization': 'Bearer $token'}),
+        options: _partnerOptions(bearerToken: token),
       );
       return (response.data as Map<String, dynamic>);
     } on DioException catch (e) {
@@ -406,7 +438,7 @@ class DlcApiDatasource {
     try {
       final response = await _dio.get(
         '/auth/wallet/$walletId',
-        options: Options(headers: {'Authorization': 'Bearer $token'}),
+        options: _partnerOptions(bearerToken: token),
       );
       final data = response.data;
       if (data is Map<String, dynamic>) return data;
@@ -499,7 +531,7 @@ class DlcApiDatasource {
     try {
       final response = await _dio.get(
         '/dlcs/$dlcId/settlement-status',
-        options: Options(headers: {'Authorization': 'Bearer $token'}),
+        options: _partnerOptions(bearerToken: token),
       );
       return (response.data as Map<String, dynamic>);
     } on DioException catch (e) {
@@ -515,7 +547,7 @@ class DlcApiDatasource {
     try {
       final response = await _dio.get(
         '/dlcs/$dlcId',
-        options: Options(headers: {'Authorization': 'Bearer $token'}),
+        options: _partnerOptions(bearerToken: token),
       );
       return (response.data as Map<String, dynamic>);
     } on DioException catch (e) {
@@ -531,7 +563,7 @@ class DlcApiDatasource {
     try {
       final response = await _dio.get(
         '/dlcs/$dlcId/funding-transaction',
-        options: Options(headers: {'Authorization': 'Bearer $token'}),
+        options: _partnerOptions(bearerToken: token),
       );
       final data = response.data;
       if (data is Map<String, dynamic>) return data;
@@ -550,7 +582,7 @@ class DlcApiDatasource {
     try {
       final response = await _dio.get(
         '/dlcs/$dlcId/payout-data',
-        options: Options(headers: {'Authorization': 'Bearer $token'}),
+        options: _partnerOptions(bearerToken: token),
       );
       final data = response.data;
       if (data is Map<String, dynamic>) return data;
@@ -569,7 +601,7 @@ class DlcApiDatasource {
     try {
       final response = await _dio.get(
         '/dlcs/$dlcId/attestation',
-        options: Options(headers: {'Authorization': 'Bearer $token'}),
+        options: _partnerOptions(bearerToken: token),
       );
       final data = response.data;
       if (data is Map<String, dynamic>) return data;
@@ -585,7 +617,10 @@ class DlcApiDatasource {
   }) async {
     await _ensureBaseUrl();
     try {
-      final response = await _dio.get('/orderbook/$instrumentId');
+      final response = await _dio.get(
+        '/orderbook/$instrumentId',
+        options: _partnerOptions(),
+      );
       return (response.data as Map<String, dynamic>);
     } on DioException catch (e) {
       throw Exception(_readApiError(e));

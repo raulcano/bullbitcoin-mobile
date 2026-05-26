@@ -80,6 +80,10 @@ class DlcCubit extends Cubit<DlcState> {
     if (alreadyHydrated) {
       if (state.auth != null) {
         unawaited(refreshOverviewTab());
+      } else {
+        // Registration may have completed in secure storage while an older
+        // wallet-session commit was discarded as stale (e.g. double-tap Activate).
+        unawaited(_restoreActiveWalletSessionIfStored());
       }
       return;
     }
@@ -433,6 +437,7 @@ class DlcCubit extends Cubit<DlcState> {
 
   Future<void> switchActiveWallet(String walletOriginId) async {
     _beginWalletSessionTransition();
+    final session = _walletSessionGeneration;
     emit(
       state.copyWith(
         actionInProgress: true,
@@ -445,8 +450,10 @@ class DlcCubit extends Cubit<DlcState> {
       await _repository.setActiveWalletOriginId(walletOriginId);
       await _commitActiveWalletSession(
         infoMessage: 'Active DLC wallet switched.',
+        walletSession: session,
       );
     } catch (e) {
+      if (_isStaleWalletSessionGeneration(session)) return;
       emit(
         state.copyWith(
           actionInProgress: false,
@@ -458,6 +465,7 @@ class DlcCubit extends Cubit<DlcState> {
 
   Future<void> activateWalletForDlc(String walletOriginId) async {
     _beginWalletSessionTransition();
+    final session = _walletSessionGeneration;
     emit(
       state.copyWith(
         actionInProgress: true,
@@ -467,7 +475,8 @@ class DlcCubit extends Cubit<DlcState> {
       ),
     );
     try {
-      final alreadyRegistered = state.registeredWalletAuths.any(
+      final storedAuths = await _repository.getAllWalletAuths();
+      final alreadyRegistered = storedAuths.any(
         (auth) => auth.walletOriginId == walletOriginId,
       );
       if (alreadyRegistered) {
@@ -479,8 +488,10 @@ class DlcCubit extends Cubit<DlcState> {
         infoMessage: alreadyRegistered
             ? 'Active DLC wallet switched.'
             : 'Wallet registered and activated for DLC.',
+        walletSession: session,
       );
     } catch (e) {
+      if (_isStaleWalletSessionGeneration(session)) return;
       emit(
         state.copyWith(
           actionInProgress: false,
@@ -490,9 +501,32 @@ class DlcCubit extends Cubit<DlcState> {
     }
   }
 
+  /// Rehydrates cubit state when secure storage has an active wallet but the
+  /// in-memory singleton was left without [DlcState.auth] (stale session commit).
+  Future<void> _restoreActiveWalletSessionIfStored() async {
+    if (isClosed || state.auth != null || state.actionInProgress) return;
+    try {
+      final storedAuth = await _repository.getWalletAuth();
+      final registeredWalletAuths = await _repository.getAllWalletAuths();
+      if (isClosed) return;
+      if (storedAuth == null) {
+        if (registeredWalletAuths.length != state.registeredWalletAuths.length) {
+          emit(state.copyWith(registeredWalletAuths: registeredWalletAuths));
+        }
+        return;
+      }
+      await _commitActiveWalletSession(walletSession: _walletSessionGeneration);
+    } catch (_) {
+      // Non-fatal; pull-to-refresh or Activate can retry.
+    }
+  }
+
   /// Applies the new active wallet without reloading instruments, readiness, or UTXOs.
-  Future<void> _commitActiveWalletSession({required String infoMessage}) async {
-    final session = _walletSessionGeneration;
+  /// Returns false when a newer activate/switch superseded this commit.
+  Future<bool> _commitActiveWalletSession({
+    String? infoMessage,
+    required int walletSession,
+  }) async {
     _repository.clearDlcDetailCache();
     final validation = await _repository.validateAndLoadWalletAuths();
     final auth = validation.activeAuth;
@@ -502,10 +536,10 @@ class DlcCubit extends Cubit<DlcState> {
         : await _ordersFromCoordinatorPreservingLocal(
             fetchDlcDetails: false,
             preserveUiOrders: false,
-            walletSession: session,
+            walletSession: walletSession,
           );
 
-    if (_isStaleWalletSessionGeneration(session)) return;
+    if (_isStaleWalletSessionGeneration(walletSession)) return false;
 
     emit(
       state.copyWith(
@@ -522,17 +556,19 @@ class DlcCubit extends Cubit<DlcState> {
         orderbookAsks: const [],
         strikeOrderbooks: const [],
         infoMessage: infoMessage,
+        clearInfo: infoMessage == null,
       ),
     );
     _configureBackgroundPolling(orders);
     if (auth != null) {
       unawaited(
         _hydrateActiveWalletInBackground(
-          walletSession: session,
+          walletSession: walletSession,
           walletOriginId: auth.walletOriginId,
         ),
       );
     }
+    return true;
   }
 
   /// Refreshes balances, orderbook, and strikes after wallet switch (UTXO sync is slowest).
