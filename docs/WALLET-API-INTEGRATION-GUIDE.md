@@ -434,18 +434,18 @@ Registration is triggered from the DLC home screen wallet picker via `DlcCubit.r
 
 **3.1 Nonce** — `DlcApiDatasource.createNonce()` → `POST /auth/nonce`. The optional `GET /auth/nonce/{nonce}` validation endpoint is not used; registration validates the nonce implicitly.
 
-**3.2 Xpub** — The coordinator receives a BIP32 xpub in base58: `Bip32Derivation.getBip32Xpub(wallet.xpub).toBase58()`. Only the user's selected on-chain Bitcoin wallet is eligible.
+**3.2 Xpub** — The coordinator receives the selected on-chain Bitcoin wallet's stored extended public key (`wallet.xpub`, for example `xpub`/`ypub`/`zpub` on mainnet or `tpub`/`upub`/`vpub` on testnet). Before registration, `DlcLocalSigner.registrationXpubForCoordinator()` checks that this xpub matches the locally derived account key.
 
-**3.3 Ownership proofs** — `DlcLocalSigner.signNonceProofCandidates()` tries multiple digest/key variants because coordinator deployments may expect different nonce-binding formats:
+**3.3 Ownership proofs** — `DlcLocalSigner.signXpubRegistrationProof()` signs the nonce with the private extended account key matching the submitted xpub:
 
-- account-level key at `wallet.derivationPath`,
-- interaction/funding key at `{wallet.derivationPath}/0/0`,
-- raw nonce UTF-8 vs hex-encoded nonce,
-- single SHA256 vs double SHA256.
+- build `message_hex = nonce.encode('utf-8').hex()`,
+- mirror bitcoinlib normalization by double-SHA256 hashing decoded non-32-byte messages,
+- sign the normalized digest with the account-level key at `wallet.derivationPath`,
+- send DER-encoded hex with bitcoinlib's trailing `SIGHASH_ALL` byte.
 
-The loop in `registerWalletByOriginId()` submits each candidate until registration succeeds or a non-signature error is returned.
+`registerWalletByOriginId()` submits one canonical xpub signature.
 
-**3.4 UTXO proofs** — `GetWalletUtxosUsecase` loads local UTXOs; `DlcLocalSigner.buildUtxoProofs()` signs `SHA256(txid + vout + nonce)` with the per-UTXO private key and emits `{ txid, vout, signature (DER + sighash byte), public_key }`.
+**3.4 UTXO proofs** — `GetWalletUtxosUsecase` loads local UTXOs; `DlcLocalSigner.buildUtxoProofs()` signs `SHA256(txid + vout + nonce)` with the per-UTXO private key and emits `{ txid, vout, signature (DER hex), public_key }`.
 
 **3.5 Persist auth** — Response fields map to `DlcWalletAuth` and are stored in secure storage via `DlcAuthStorage.store()`:
 

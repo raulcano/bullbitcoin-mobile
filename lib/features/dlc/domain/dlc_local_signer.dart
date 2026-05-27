@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:typed_data';
 
 import 'package:bb_mobile/core/seed/data/repository/seed_repository.dart';
 import 'package:bb_mobile/core/settings/domain/settings_entity.dart';
@@ -86,37 +85,35 @@ class DlcLocalSigner {
     );
   }
 
-  /// Account-level xpub sent to `POST /auth/wallet`, matching the key that signs
-  /// the registration nonce (network-native prefix: vpub/tpub/zpub/…).
-  Future<String> registrationXpubForCoordinator({required Wallet wallet}) async {
+  /// Account-level xpub sent to `POST /auth/wallet`. Must match the extended
+  /// private key used to sign the registration nonce.
+  Future<String> registrationXpubForCoordinator({
+    required Wallet wallet,
+  }) async {
     final seed = await _seedRepository.get(wallet.masterFingerprint);
     final accountKey = _deriveWalletAccountKey(
       seedBytes: seed.bytes,
       wallet: wallet,
     );
-    // Must use the neutered (public) key. [Bip32Keys.convert] only re-prefixes
-    // version bytes; on a private key that would still encode xpriv payload and
-    // break coordinator xpub signature verification.
-    return accountKey.neutered.convert(
+    final derived = accountKey.neutered.convert(
       wallet.scriptType.getXpubType(wallet.network),
     );
-  }
-
-  Future<String> signNonceProof({
-    required Wallet wallet,
-    required String nonce,
-  }) async {
-    final candidates = await signNonceProofCandidates(
-      wallet: wallet,
-      nonce: nonce,
-    );
-    if (candidates.isEmpty) {
-      throw Exception('Could not build DLC registration nonce signature.');
+    if (derived != wallet.xpub) {
+      throw Exception(
+        'Wallet xpub does not match the derived account key for DLC registration.',
+      );
     }
-    return candidates.first;
+    return wallet.xpub;
   }
 
-  Future<List<String>> signNonceProofCandidates({
+  /// Signs the coordinator nonce for `POST /auth/wallet` xpub proof.
+  ///
+  /// Backend-compatible flow:
+  /// 1. `message_hex = utf8(nonce).hex`
+  /// 2. bitcoinlib normalizes non-32-byte decoded messages with double-SHA256
+  /// 3. ECDSA-sign the normalized 32-byte digest with the account private key
+  /// 4. Return DER-encoded hex with trailing `SIGHASH_ALL` (`0x01`)
+  Future<String> signXpubRegistrationProof({
     required Wallet wallet,
     required String nonce,
   }) async {
@@ -125,22 +122,14 @@ class DlcLocalSigner {
       seedBytes: seed.bytes,
       wallet: wallet,
     );
-    final nonceUtf8 = utf8.encode(nonce);
-
-    Uint8List signDigest(Bip32Keys key, List<int> digest) =>
-        Uint8List.fromList(key.sign(Uint8List.fromList(digest)) as List<int>);
-
-    String derSig(Bip32Keys key, List<int> digest) =>
-        compactSecp256k1SignatureToDerHex(
-          signDigest(key, digest),
-          includeHashType: true,
-        );
-
-    // Coordinator (bitcoinlib): double-SHA256(utf8(nonce)), account xpub key,
-    // DER + trailing SIGHASH_ALL (0x01) — required by Signature.parse_bytes().
-    final bitcoinlibDigest = _doubleSha256(nonceUtf8);
-
-    return [derSig(accountKey, bitcoinlibDigest)];
+    final digest = _coordinatorXpubProofDigest(nonce);
+    final compactSignature = Uint8List.fromList(
+      accountKey.sign(digest) as List<int>,
+    );
+    return compactSecp256k1SignatureToDerHex(
+      compactSignature,
+      includeHashType: true,
+    );
   }
 
   Future<String> signUtxoProof({
@@ -225,14 +214,14 @@ class DlcLocalSigner {
     final fundingHashes =
         (context['funding_input_sighashes_hex'] as List<dynamic>? ?? const [])
             .cast<String>();
-    final fundingAddresses = (context['funding_input_addresses'] as List<dynamic>? ??
-            const [])
-        .map((item) => item.toString())
-        .toList(growable: false);
-    final fundingOutpoints = (context['funding_input_outpoints'] as List<dynamic>? ??
-            const [])
-        .map((item) => item.toString())
-        .toList(growable: false);
+    final fundingAddresses =
+        (context['funding_input_addresses'] as List<dynamic>? ?? const [])
+            .map((item) => item.toString())
+            .toList(growable: false);
+    final fundingOutpoints =
+        (context['funding_input_outpoints'] as List<dynamic>? ?? const [])
+            .map((item) => item.toString())
+            .toList(growable: false);
 
     if (kDebugMode) {
       debugPrint(
@@ -279,8 +268,9 @@ class DlcLocalSigner {
             vout: u.vout,
             scriptPubkey: u.scriptPubkey,
             address: u.address,
-            addressKeyChain:
-                u.addressKeyChain == WalletAddressKeyChain.internal ? 1 : 0,
+            addressKeyChain: u.addressKeyChain == WalletAddressKeyChain.internal
+                ? 1
+                : 0,
           ),
         )
         .toList(growable: false);
@@ -364,4 +354,15 @@ class DlcLocalSigner {
     return sha256.convert(first).bytes;
   }
 
+  /// Message digest for coordinator xpub registration proofs. This mirrors
+  /// bitcoinlib `sign(message_hex, xprv)` where:
+  /// `message_hex = nonce.encode('utf-8').hex()`.
+  Uint8List _coordinatorXpubProofDigest(String nonce) {
+    final messageHex = Uint8List.fromList(utf8.encode(nonce)).toHexString();
+    final messageBytes = Uint8ListX.fromHexString(messageHex);
+    if (messageBytes.length == 32) {
+      return messageBytes;
+    }
+    return Uint8List.fromList(_doubleSha256(messageBytes));
+  }
 }

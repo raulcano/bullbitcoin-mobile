@@ -169,6 +169,9 @@ void main() {
       ),
     ).thenAnswer((_) async => wallet);
     when(
+      () => signer.registrationXpubForCoordinator(wallet: wallet),
+    ).thenAnswer((_) async => wallet.xpub);
+    when(
       () => signer.deriveFundingPubkey(wallet: wallet),
     ).thenAnswer((_) async => funding);
     when(() => datasource.listInstruments()).thenAnswer(
@@ -254,9 +257,11 @@ void main() {
           () => datasource.createNonce(),
         ).thenAnswer((_) async => {'nonce': 'nonce-1'});
         when(
-          () =>
-              signer.signNonceProofCandidates(wallet: wallet, nonce: 'nonce-1'),
-        ).thenAnswer((_) async => ['xpub-signature']);
+          () => signer.signXpubRegistrationProof(
+            wallet: wallet,
+            nonce: 'nonce-1',
+          ),
+        ).thenAnswer((_) async => 'xpub-signature');
         when(
           () => getWalletUtxosUsecase.execute(walletId: wallet.id),
         ).thenAnswer((_) async => utxos);
@@ -384,46 +389,49 @@ void main() {
       },
     );
 
-    test('recovers order after connection error using idempotency reconcile', () async {
-      final capturedPayloads = <Map<String, dynamic>>[];
-      when(
-        () => datasource.createOrder(
-          token: auth.walletToken,
-          payload: any(named: 'payload'),
-        ),
-      ).thenAnswer((invocation) async {
-        capturedPayloads.add(
-          Map<String, dynamic>.from(
-            invocation.namedArguments[#payload] as Map<String, dynamic>,
+    test(
+      'recovers order after connection error using idempotency reconcile',
+      () async {
+        final capturedPayloads = <Map<String, dynamic>>[];
+        when(
+          () => datasource.createOrder(
+            token: auth.walletToken,
+            payload: any(named: 'payload'),
           ),
+        ).thenAnswer((invocation) async {
+          capturedPayloads.add(
+            Map<String, dynamic>.from(
+              invocation.namedArguments[#payload] as Map<String, dynamic>,
+            ),
+          );
+          throw const DlcApiException(
+            statusCode: null,
+            message:
+                'The connection errored: The connection errored: No route to host',
+            isTimeout: false,
+            isConnectionError: true,
+          );
+        });
+        when(() => datasource.listOrders(token: auth.walletToken)).thenAnswer(
+          (_) async => [
+            {
+              ..._successOrder(),
+              'idempotency_key': capturedPayloads.first['idempotency_key'],
+            },
+          ],
         );
-        throw const DlcApiException(
-          statusCode: null,
-          message:
-              'The connection errored: The connection errored: No route to host',
-          isTimeout: false,
-          isConnectionError: true,
-        );
-      });
-      when(() => datasource.listOrders(token: auth.walletToken)).thenAnswer(
-        (_) async => [
-          {
-            ..._successOrder(),
-            'idempotency_key': capturedPayloads.first['idempotency_key'],
-          },
-        ],
-      );
 
-      final result = await repository.createOrder(_draft());
+        final result = await repository.createOrder(_draft());
 
-      expect(result.order.orderId, 'order-1');
-      verify(
-        () => datasource.createOrder(
-          token: auth.walletToken,
-          payload: any(named: 'payload'),
-        ),
-      ).called(2);
-    });
+        expect(result.order.orderId, 'order-1');
+        verify(
+          () => datasource.createOrder(
+            token: auth.walletToken,
+            payload: any(named: 'payload'),
+          ),
+        ).called(2);
+      },
+    );
 
     test('retries timeout with the same idempotency key and body', () async {
       var calls = 0;
@@ -529,30 +537,33 @@ void main() {
   });
 
   group('DlcRepository.cancelOrder', () {
-    test('removes stale local order when coordinator returns not found', () async {
-      const staleOrderId = 'stale-order-99';
-      await orderStorage.upsertOrder(
-        environment: Environment.testnet,
-        walletOriginId: auth.walletOriginId,
-        values: _successOrder(orderId: staleOrderId),
-      );
-      when(
-        () => datasource.listOrders(token: auth.walletToken),
-      ).thenAnswer((_) async => const []);
-      when(
-        () => datasource.cancelOrder(
-          token: auth.walletToken,
-          orderId: staleOrderId,
-        ),
-      ).thenThrow(Exception('HTTP 404: not_found: Order not found'));
+    test(
+      'removes stale local order when coordinator returns not found',
+      () async {
+        const staleOrderId = 'stale-order-99';
+        await orderStorage.upsertOrder(
+          environment: Environment.testnet,
+          walletOriginId: auth.walletOriginId,
+          values: _successOrder(orderId: staleOrderId),
+        );
+        when(
+          () => datasource.listOrders(token: auth.walletToken),
+        ).thenAnswer((_) async => const []);
+        when(
+          () => datasource.cancelOrder(
+            token: auth.walletToken,
+            orderId: staleOrderId,
+          ),
+        ).thenThrow(Exception('HTTP 404: not_found: Order not found'));
 
-      final result = await repository.cancelOrder(staleOrderId);
-      expect(result.removedBecauseNotFoundOnCoordinator, isTrue);
-      expect(result.order, isNull);
+        final result = await repository.cancelOrder(staleOrderId);
+        expect(result.removedBecauseNotFoundOnCoordinator, isTrue);
+        expect(result.order, isNull);
 
-      final orders = await repository.listOrders();
-      expect(orders.any((o) => o.orderId == staleOrderId), isFalse);
-    });
+        final orders = await repository.listOrders();
+        expect(orders.any((o) => o.orderId == staleOrderId), isFalse);
+      },
+    );
   });
 
   group('DlcApiDatasource.createOrder', () {

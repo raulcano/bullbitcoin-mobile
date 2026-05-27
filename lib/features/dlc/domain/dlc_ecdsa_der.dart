@@ -5,9 +5,9 @@ import 'package:bb_mobile/core/utils/uint_8_list_x.dart';
 /// DER-encodes a 64-byte compact secp256k1 signature (BIP340-style r||s).
 ///
 /// When [includeHashType] is true, appends `SIGHASH_ALL` (`0x01`). The DLC
-/// coordinator's bitcoinlib verifier expects this trailing byte for registration
-/// proofs (`POST /auth/wallet`); pure DER without it is mis-parsed as truncated
-/// ASN.1 and fails with `InvalidDerSignature`.
+/// coordinator's bitcoinlib verifier expects this trailing byte for xpub
+/// registration proofs (`POST /auth/wallet`); pure DER without it fails ASN.1
+/// parsing. UTXO ownership proofs use bare DER ([includeHashType] false).
 String compactSecp256k1SignatureToDerHex(
   Uint8List compactSignature, {
   bool includeHashType = false,

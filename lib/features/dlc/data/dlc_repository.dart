@@ -225,7 +225,7 @@ class DlcRepository {
       throw Exception('Coordinator did not return nonce.');
     }
 
-    final signatureCandidates = await _localSigner.signNonceProofCandidates(
+    final xpubSignature = await _localSigner.signXpubRegistrationProof(
       wallet: wallet,
       nonce: nonce,
     );
@@ -237,32 +237,14 @@ class DlcRepository {
       utxos: walletUtxos,
       nonce: nonce,
     );
-    Map<String, dynamic>? registrationPayload;
-    Exception? lastError;
 
-    for (final xpubSignature in signatureCandidates) {
-      try {
-        registrationPayload = await _datasource.registerWallet(
-          xpub: coordinatorXpub,
-          nonce: nonce,
-          xpubSignature: xpubSignature,
-          label: wallet.label ?? 'Bull Wallet',
-          utxos: utxoProofs,
-        );
-        break;
-      } catch (e) {
-        final error = Exception('$e');
-        lastError = error;
-        final message = e.toString();
-        if (!message.contains('auth.wallet.xpub_signature_failed')) {
-          rethrow;
-        }
-      }
-    }
-    if (registrationPayload == null) {
-      throw lastError ??
-          Exception('Wallet registration failed: nonce signature invalid.');
-    }
+    final registrationPayload = await _datasource.registerWallet(
+      xpub: coordinatorXpub,
+      nonce: nonce,
+      xpubSignature: xpubSignature,
+      label: wallet.label ?? 'Bull Wallet',
+      utxos: utxoProofs,
+    );
 
     final auth = DlcWalletAuth(
       walletOriginId: wallet.id,
