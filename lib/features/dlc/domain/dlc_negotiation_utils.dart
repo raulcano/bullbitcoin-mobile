@@ -90,7 +90,11 @@ bool needsDlcMakerSign(DlcOrderSummary order) {
   return false;
 }
 
-/// Funding is broadcast (or later); no more accept/sign automation.
+/// Wallet-side accept/sign automation is complete.
+///
+/// `signed` means the coordinator accepted the SignDLCMessage; funding
+/// broadcast can still be pending or failed until `funding_broadcasted` or a
+/// `funding_txid` appears.
 bool isDlcNegotiationComplete(DlcOrderSummary order) {
   if (order.fundingTxid != null && order.fundingTxid!.isNotEmpty) {
     return true;
@@ -99,6 +103,7 @@ bool isDlcNegotiationComplete(DlcOrderSummary order) {
   if (dlcStatus == null || dlcStatus.isEmpty) return false;
   switch (dlcStatus) {
     case 'signed':
+    case 'funding_broadcasted':
     case 'matured':
     case 'attested':
     case 'cet_broadcasted':

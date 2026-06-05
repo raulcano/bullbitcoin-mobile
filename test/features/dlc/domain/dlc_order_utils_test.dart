@@ -10,6 +10,7 @@ DlcOrderSummary _order({
   String? matchRole,
   bool? isMaker,
   String? matchedOrderId,
+  String? lastErrorReason,
 }) {
   return DlcOrderSummary(
     orderId: 'order-1',
@@ -32,12 +33,30 @@ DlcOrderSummary _order({
     sideCollateralSat: null,
     partnerFeeSat: null,
     networkFeeSat: null,
-    lastErrorReason: null,
+    lastErrorReason: lastErrorReason,
     lastErrorMessage: null,
     oracleOutcomeValue: null,
     fundingTxid: null,
     closingTxid: null,
     refundTxid: null,
+  );
+}
+
+DlcOrderSummary _orderWithTxids({
+  required bool isMaker,
+  required String side,
+}) {
+  return _order(
+    status: 'filled',
+    dlcId: 'dlc-1',
+    dlcStatus: 'cet_closed',
+    matchRole: isMaker ? 'maker' : 'taker',
+    isMaker: isMaker,
+  ).copyWith(
+    side: side,
+    fundingTxid: 'fund-tx',
+    closingTxid: 'close-tx',
+    refundTxid: 'refund-tx',
   );
 }
 
@@ -179,6 +198,19 @@ void main() {
       );
     });
 
+    test('filled + funding_broadcasted dlcStatus is live', () {
+      expect(
+        isDlcLiveOrder(
+          _order(
+            status: 'filled',
+            dlcId: 'dlc-1',
+            dlcStatus: 'funding_broadcasted',
+          ),
+        ),
+        true,
+      );
+    });
+
     test('order.status signed without dlcStatus is not live', () {
       expect(isDlcLiveOrder(_order(status: 'signed', dlcId: 'dlc-1')), false);
     });
@@ -242,6 +274,265 @@ void main() {
       expect(isDlcOpenOrder(order), false);
       expect(isDlcClosedOrder(order), false);
       expect(isDlcLiveOrder(order), true);
+    });
+  });
+
+  group('formatDlcStatusLabel', () {
+    test('signed reads as funding broadcast pending', () {
+      expect(
+        formatDlcStatusLabel(
+          _order(status: 'filled', dlcId: 'dlc-1', dlcStatus: 'signed'),
+        ),
+        'Funding broadcast pending',
+      );
+    });
+
+    test('signed with funding_broadcast_failed reads as failed', () {
+      expect(
+        formatDlcStatusLabel(
+          _order(
+            status: 'filled',
+            dlcId: 'dlc-1',
+            dlcStatus: 'signed',
+            lastErrorReason: 'funding_broadcast_failed',
+          ),
+        ),
+        'Funding broadcast failed',
+      );
+    });
+
+    test('funding_broadcasted explains maturity is next', () {
+      expect(
+        formatDlcStatusLabel(
+          _order(
+            status: 'filled',
+            dlcId: 'dlc-1',
+            dlcStatus: 'funding_broadcasted',
+          ),
+        ),
+        'Funding broadcasted, awaiting oracle maturity',
+      );
+    });
+  });
+
+  group('orderShowsFundingTxExplorerLink', () {
+    test('true for funding_broadcasted with txid', () {
+      expect(
+        orderShowsFundingTxExplorerLink(
+          _order(
+            status: 'filled',
+            dlcId: 'dlc-1',
+            dlcStatus: 'funding_broadcasted',
+          ).copyWith(fundingTxid: 'abc123'),
+        ),
+        isTrue,
+      );
+    });
+
+    test('false without funding txid', () {
+      expect(
+        orderShowsFundingTxExplorerLink(
+          _order(
+            status: 'filled',
+            dlcId: 'dlc-1',
+            dlcStatus: 'funding_broadcasted',
+          ),
+        ),
+        isFalse,
+      );
+    });
+
+    test('false for unrelated dlc status', () {
+      expect(
+        orderShowsFundingTxExplorerLink(
+          _order(
+            status: 'filled',
+            dlcId: 'dlc-1',
+            dlcStatus: 'attested',
+          ).copyWith(fundingTxid: 'abc123'),
+        ),
+        isFalse,
+      );
+    });
+  });
+
+  group('dlcFundingTxMempoolExplorerUrl', () {
+    test('uses testnet path on testnet', () {
+      expect(
+        dlcFundingTxMempoolExplorerUrl(
+          fundingTxid: 'abc123',
+          isTestnet: true,
+        ),
+        'https://mempool.space/testnet/tx/abc123',
+      );
+    });
+
+    test('uses mainnet path on mainnet', () {
+      expect(
+        dlcFundingTxMempoolExplorerUrl(
+          fundingTxid: 'abc123',
+          isTestnet: false,
+        ),
+        'https://mempool.space/tx/abc123',
+      );
+    });
+  });
+
+  group('orderShowsSettlementTxExplorerLink', () {
+    test('true for closed order with closing txid', () {
+      expect(
+        orderShowsSettlementTxExplorerLink(
+          _order(
+            status: 'filled',
+            dlcId: 'dlc-1',
+            dlcStatus: 'cet_closed',
+          ).copyWith(closingTxid: 'close-tx'),
+        ),
+        isTrue,
+      );
+    });
+
+    test('true for closed order with refund txid', () {
+      expect(
+        orderShowsSettlementTxExplorerLink(
+          _order(
+            status: 'filled',
+            dlcId: 'dlc-1',
+            dlcStatus: 'refund_closed',
+          ).copyWith(refundTxid: 'refund-tx'),
+        ),
+        isTrue,
+      );
+    });
+
+    test('false for live order with closing txid', () {
+      expect(
+        orderShowsSettlementTxExplorerLink(
+          _order(
+            status: 'filled',
+            dlcId: 'dlc-1',
+            dlcStatus: 'funding_broadcasted',
+          ).copyWith(closingTxid: 'close-tx'),
+        ),
+        isFalse,
+      );
+    });
+  });
+
+  group('dlcOrderSettlementTxExplorerLinks', () {
+    test('returns settlement and refund links for closed order', () {
+      final links = dlcOrderSettlementTxExplorerLinks(
+        _order(
+          status: 'filled',
+          dlcId: 'dlc-1',
+          dlcStatus: 'cet_closed',
+        ).copyWith(closingTxid: 'close-tx', refundTxid: 'refund-tx'),
+        isTestnet: true,
+      );
+      expect(links, hasLength(2));
+      expect(links[0].label, 'Settlement TX');
+      expect(links[0].url, 'https://mempool.space/testnet/tx/close-tx');
+      expect(links[1].label, 'Refund TX');
+      expect(links[1].url, 'https://mempool.space/testnet/tx/refund-tx');
+    });
+  });
+
+  group('dlcOrderInfoMempoolTxExplorerLinks', () {
+    test('maker and taker see identical info-dialog links', () {
+      final makerLinks = dlcOrderInfoMempoolTxExplorerLinks(
+        _orderWithTxids(isMaker: true, side: 'sell'),
+        isTestnet: true,
+      );
+      final takerLinks = dlcOrderInfoMempoolTxExplorerLinks(
+        _orderWithTxids(isMaker: false, side: 'buy'),
+        isTestnet: true,
+      );
+      expect(
+        makerLinks.map((link) => (link.label, link.url)).toList(),
+        takerLinks.map((link) => (link.label, link.url)).toList(),
+      );
+      expect(makerLinks.map((link) => link.label), [
+        'Funding TX',
+        'Settlement TX',
+        'Refund TX',
+      ]);
+    });
+  });
+
+  group('dlcOrderMempoolTxExplorerLinks', () {
+    test('maker and taker see identical live funding links', () {
+      final makerLinks = dlcOrderMempoolTxExplorerLinks(
+        _order(
+          status: 'filled',
+          dlcId: 'dlc-1',
+          dlcStatus: 'funding_broadcasted',
+          matchRole: 'maker',
+          isMaker: true,
+        ).copyWith(fundingTxid: 'fund-tx', side: 'sell'),
+        isTestnet: false,
+        includeFunding: true,
+      );
+      final takerLinks = dlcOrderMempoolTxExplorerLinks(
+        _order(
+          status: 'filled',
+          dlcId: 'dlc-1',
+          dlcStatus: 'funding_broadcasted',
+          matchRole: 'taker',
+          isMaker: false,
+        ).copyWith(fundingTxid: 'fund-tx', side: 'buy'),
+        isTestnet: false,
+        includeFunding: true,
+      );
+      expect(
+        makerLinks.map((link) => (link.label, link.url)).toList(),
+        takerLinks.map((link) => (link.label, link.url)).toList(),
+      );
+    });
+
+    test('maker and taker see identical closed-card settlement links', () {
+      final makerLinks = dlcOrderMempoolTxExplorerLinks(
+        _orderWithTxids(isMaker: true, side: 'sell'),
+        isTestnet: false,
+        includeSettlement: true,
+      );
+      final takerLinks = dlcOrderMempoolTxExplorerLinks(
+        _orderWithTxids(isMaker: false, side: 'buy'),
+        isTestnet: false,
+        includeSettlement: true,
+      );
+      expect(
+        makerLinks.map((link) => (link.label, link.url)).toList(),
+        takerLinks.map((link) => (link.label, link.url)).toList(),
+      );
+    });
+
+    test('includes funding tx for closed order in info dialog mode', () {
+      final links = dlcOrderMempoolTxExplorerLinks(
+        _order(
+          status: 'filled',
+          dlcId: 'dlc-1',
+          dlcStatus: 'cet_closed',
+        ).copyWith(fundingTxid: 'fund-tx'),
+        isTestnet: false,
+        includeFunding: true,
+        fundingLivePhaseOnly: false,
+      );
+      expect(links, hasLength(1));
+      expect(links.first.label, 'Funding TX');
+      expect(links.first.url, 'https://mempool.space/tx/fund-tx');
+    });
+
+    test('excludes funding tx for closed order on live card mode', () {
+      final links = dlcOrderMempoolTxExplorerLinks(
+        _order(
+          status: 'filled',
+          dlcId: 'dlc-1',
+          dlcStatus: 'cet_closed',
+        ).copyWith(fundingTxid: 'fund-tx'),
+        isTestnet: false,
+        includeFunding: true,
+      );
+      expect(links, isEmpty);
     });
   });
 

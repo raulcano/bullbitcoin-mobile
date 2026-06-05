@@ -120,6 +120,18 @@ class ApiServiceConstants {
     _envOr('DLC_COORDINATOR_BACKUP_URL', ''),
   );
 
+  /// ColdPay user-dashboard root for the DLC Explorer (mainnet).
+  static String dlcExplorerBaseUrl = _envOr(
+    'DLC_EXPLORER_URL',
+    'http://backend.coldpay.de:8300',
+  );
+
+  /// ColdPay user-dashboard root for the DLC Explorer (testnet).
+  static String dlcExplorerTestBaseUrl = _envOr(
+    'DLC_EXPLORER_TEST_URL',
+    _envOr('DLC_EXPLORER_URL', 'http://backend.coldpay.de:8300'),
+  );
+
   /// Bull Bitcoin partner integration token for coordinator order/DLC routes.
   /// Not user-editable; set via build env / `.env` for supported deployments.
   static String dlcCoordinatorPartnerId = _envOr(

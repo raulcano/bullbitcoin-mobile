@@ -69,6 +69,7 @@ bool isMakerAwaitingTakerAccept(DlcOrderSummary order) {
   if (status != 'filled' && status != 'pending_accept') return false;
   final dlcStatus = order.dlcStatus?.toLowerCase();
   if (dlcStatus == 'signed' ||
+      dlcStatus == 'funding_broadcasted' ||
       dlcStatus == 'cet_broadcasted' ||
       dlcStatus == 'refund_broadcasted' ||
       dlcStatus == 'terminated' ||
@@ -91,6 +92,7 @@ bool isTakerAwaitingMakerSign(DlcOrderSummary order) {
 
   final dlcStatus = order.dlcStatus?.toLowerCase();
   if (dlcStatus == 'signed' ||
+      dlcStatus == 'funding_broadcasted' ||
       dlcStatus == 'cet_broadcasted' ||
       dlcStatus == 'refund_broadcasted' ||
       dlcStatus == 'terminated' ||

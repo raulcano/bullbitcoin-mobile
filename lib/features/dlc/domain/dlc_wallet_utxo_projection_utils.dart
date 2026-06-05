@@ -14,20 +14,28 @@ bool _isSettlementBroadcastDlcStatus(String? status) {
   return normalized == 'cet_broadcasted' || normalized == 'refund_broadcasted';
 }
 
+bool _isFundingBroadcastDlcStatus(String? status) {
+  final normalized = status?.toLowerCase().trim();
+  return normalized == 'funding_broadcasted';
+}
+
 /// Whether [current] crossed a coordinator broadcast milestone vs [previous].
 DlcCoordinatorUtxoProjectionKind? dlcCoordinatorUtxoProjectionKind({
   required DlcOrderSummary current,
   DlcOrderSummary? previous,
 }) {
-  if (previous == null) return null;
+  final statusNow = current.dlcStatus?.toLowerCase().trim();
+  final statusBefore = previous?.dlcStatus?.toLowerCase().trim();
 
   if (_hasNonEmptyTxid(current.fundingTxid) &&
-      !_hasNonEmptyTxid(previous.fundingTxid)) {
+      !_hasNonEmptyTxid(previous?.fundingTxid)) {
     return DlcCoordinatorUtxoProjectionKind.fundingBroadcast;
   }
 
-  final statusNow = current.dlcStatus?.toLowerCase().trim();
-  final statusBefore = previous.dlcStatus?.toLowerCase().trim();
+  if (_isFundingBroadcastDlcStatus(statusNow) && statusNow != statusBefore) {
+    return DlcCoordinatorUtxoProjectionKind.fundingBroadcast;
+  }
+
   if (_isSettlementBroadcastDlcStatus(statusNow) &&
       statusNow != statusBefore) {
     return DlcCoordinatorUtxoProjectionKind.settlementBroadcast;

@@ -112,6 +112,28 @@ void main() {
         isTrue,
       );
     });
+
+    test('true after signing while funding broadcast is pending', () {
+      expect(
+        isDlcNegotiationComplete(
+          _order(status: 'filled', dlcStatus: 'signed', dlcId: 'dlc-1'),
+        ),
+        isTrue,
+      );
+    });
+
+    test('true when funding broadcast succeeded', () {
+      expect(
+        isDlcNegotiationComplete(
+          _order(
+            status: 'filled',
+            dlcStatus: 'funding_broadcasted',
+            dlcId: 'dlc-1',
+          ),
+        ),
+        isTrue,
+      );
+    });
   });
 
   group('needsDlcNegotiation', () {

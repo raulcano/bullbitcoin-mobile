@@ -551,10 +551,152 @@ bool _isActiveDlcStatus(String? dlcStatus) {
     case 'offer_created':
     case 'accepted':
     case 'signed':
+    case 'funding_broadcasted':
     case 'matured':
     case 'attested':
       return true;
     default:
       return false;
   }
+}
+
+String formatDlcStatusLabel(DlcOrderSummary order) {
+  final status = order.dlcStatus?.trim();
+  if (status == null || status.isEmpty) return '-';
+
+  final normalized = status.toLowerCase();
+  if (normalized == 'signed') {
+    if (order.lastErrorReason?.toLowerCase() == 'funding_broadcast_failed') {
+      return 'Funding broadcast failed';
+    }
+    return 'Funding broadcast pending';
+  }
+  if (normalized == 'funding_broadcasted') {
+    return 'Funding broadcasted, awaiting oracle maturity';
+  }
+
+  return status;
+}
+
+/// A coordinator transaction link for mempool.space.
+class DlcMempoolTxLink {
+  const DlcMempoolTxLink({required this.label, required this.url});
+
+  final String label;
+  final String url;
+}
+
+bool _hasNonEmptyTxid(String? txid) => txid != null && txid.trim().isNotEmpty;
+
+String dlcMempoolExplorerTxUrl({
+  required String txid,
+  required bool isTestnet,
+}) {
+  final normalized = txid.trim();
+  if (isTestnet) {
+    return 'https://mempool.space/testnet/tx/$normalized';
+  }
+  return 'https://mempool.space/tx/$normalized';
+}
+
+/// True when a live order has a funding tx that can be opened on mempool.space.
+bool orderShowsFundingTxExplorerLink(DlcOrderSummary order) {
+  if (!_hasNonEmptyTxid(order.fundingTxid)) return false;
+
+  final dlcStatus = order.dlcStatus?.toLowerCase();
+  return dlcStatus == 'signed' || dlcStatus == 'funding_broadcasted';
+}
+
+/// True when a closed order has a settlement or refund tx on mempool.space.
+bool orderShowsSettlementTxExplorerLink(DlcOrderSummary order) {
+  if (!isDlcClosedOrder(order)) return false;
+  return _hasNonEmptyTxid(order.closingTxid) ||
+      _hasNonEmptyTxid(order.refundTxid);
+}
+
+String dlcFundingTxMempoolExplorerUrl({
+  required String fundingTxid,
+  required bool isTestnet,
+}) {
+  return dlcMempoolExplorerTxUrl(txid: fundingTxid, isTestnet: isTestnet);
+}
+
+List<DlcMempoolTxLink> dlcOrderSettlementTxExplorerLinks(
+  DlcOrderSummary order, {
+  required bool isTestnet,
+}) {
+  if (!orderShowsSettlementTxExplorerLink(order)) return const [];
+
+  final links = <DlcMempoolTxLink>[];
+  final closing = order.closingTxid?.trim();
+  if (closing != null && closing.isNotEmpty) {
+    links.add(
+      DlcMempoolTxLink(
+        label: 'Settlement TX',
+        url: dlcMempoolExplorerTxUrl(txid: closing, isTestnet: isTestnet),
+      ),
+    );
+  }
+  final refund = order.refundTxid?.trim();
+  if (refund != null && refund.isNotEmpty) {
+    links.add(
+      DlcMempoolTxLink(
+        label: 'Refund TX',
+        url: dlcMempoolExplorerTxUrl(txid: refund, isTestnet: isTestnet),
+      ),
+    );
+  }
+  return links;
+}
+
+List<DlcMempoolTxLink> dlcOrderMempoolTxExplorerLinks(
+  DlcOrderSummary order, {
+  required bool isTestnet,
+  bool includeFunding = false,
+  bool includeSettlement = false,
+
+  /// When false, include funding tx links whenever [fundingTxid] exists (info dialog).
+  bool fundingLivePhaseOnly = true,
+}) {
+  final links = <DlcMempoolTxLink>[];
+  if (includeFunding && _hasNonEmptyTxid(order.fundingTxid)) {
+    final showFunding = !fundingLivePhaseOnly ||
+        orderShowsFundingTxExplorerLink(order);
+    if (showFunding) {
+      links.add(
+        DlcMempoolTxLink(
+          label: 'Funding TX',
+          url: dlcMempoolExplorerTxUrl(
+            txid: order.fundingTxid!.trim(),
+            isTestnet: isTestnet,
+          ),
+        ),
+      );
+    }
+  }
+  if (includeSettlement) {
+    links.addAll(
+      dlcOrderSettlementTxExplorerLinks(order, isTestnet: isTestnet),
+    );
+  }
+  return links;
+}
+
+/// All mempool.space links for the order info dialog.
+///
+/// Role-agnostic: maker and taker rows for the same DLC see the same links
+/// when coordinator txid fields match.
+List<DlcMempoolTxLink> dlcOrderInfoMempoolTxExplorerLinks(
+  DlcOrderSummary order, {
+  required bool isTestnet,
+}) {
+  return [
+    ...dlcOrderMempoolTxExplorerLinks(
+      order,
+      isTestnet: isTestnet,
+      includeFunding: true,
+      fundingLivePhaseOnly: false,
+    ),
+    ...dlcOrderSettlementTxExplorerLinks(order, isTestnet: isTestnet),
+  ];
 }

@@ -1,6 +1,8 @@
 import 'dart:async';
 
+import 'package:bb_mobile/core/settings/domain/settings_entity.dart';
 import 'package:bb_mobile/core/utils/constants.dart';
+import 'package:bb_mobile/features/dlc/domain/dlc_explorer_utils.dart';
 import 'package:bb_mobile/features/dlc/domain/dlc_instrument_utils.dart';
 import 'package:bb_mobile/features/dlc/domain/dlc_models.dart';
 import 'package:bb_mobile/features/dlc/domain/dlc_order_in_flight.dart';
@@ -10,9 +12,11 @@ import 'package:bb_mobile/features/dlc/data/dlc_api_datasource.dart';
 import 'package:bb_mobile/features/dlc/data/dlc_repository.dart';
 import 'package:bb_mobile/features/dlc/presentation/dlc_cubit.dart';
 import 'package:bb_mobile/features/dlc/presentation/dlc_state.dart';
+import 'package:bb_mobile/features/settings/presentation/bloc/settings_cubit.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:bb_mobile/features/dlc/ui/screens/dlc_explorer_screen.dart';
 import 'package:bb_mobile/features/dlc/ui/widgets/dlc_action_loading_overlay.dart';
 import 'package:bb_mobile/features/dlc/ui/widgets/dlc_option_payout_chart.dart';
 import 'package:bb_mobile/locator.dart';
@@ -352,6 +356,7 @@ class _DlcHomeScreenState extends State<DlcHomeScreen> {
                                 'Orders filled, negotiating and awaiting maturity',
                             orders: liveOrders,
                             processingOrder: state.processingOrder,
+                            showFundingTxLink: true,
                           ),
                           const SizedBox(height: 12),
                           _OrderGroupSection(
@@ -360,6 +365,7 @@ class _DlcHomeScreenState extends State<DlcHomeScreen> {
                             orders: closedOrders,
                             processingOrder: state.processingOrder,
                             leadingIcon: Icons.task_alt_outlined,
+                            showSettlementTxLink: true,
                           ),
                         ] else ...[
                           _SimulateTabPanel(
@@ -2065,6 +2071,8 @@ class _OrderGroupSection extends StatelessWidget {
     required this.processingOrder,
     this.leadingIcon = Icons.pending_actions_outlined,
     this.showCancel = false,
+    this.showFundingTxLink = false,
+    this.showSettlementTxLink = false,
   });
 
   final String title;
@@ -2073,6 +2081,8 @@ class _OrderGroupSection extends StatelessWidget {
   final bool processingOrder;
   final IconData leadingIcon;
   final bool showCancel;
+  final bool showFundingTxLink;
+  final bool showSettlementTxLink;
 
   @override
   Widget build(BuildContext context) {
@@ -2112,6 +2122,8 @@ class _OrderGroupSection extends StatelessWidget {
                   order: order,
                   processingOrder: processingOrder,
                   showCancel: showCancel,
+                  showFundingTxLink: showFundingTxLink,
+                  showSettlementTxLink: showSettlementTxLink,
                 ),
               ),
           ],
@@ -2126,16 +2138,29 @@ class _CompactOrderEntry extends StatelessWidget {
     required this.order,
     required this.processingOrder,
     required this.showCancel,
+    this.showFundingTxLink = false,
+    this.showSettlementTxLink = false,
   });
 
   final DlcOrderSummary order;
   final bool processingOrder;
   final bool showCancel;
+  final bool showFundingTxLink;
+  final bool showSettlementTxLink;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
+    final isTestnet =
+        context.read<SettingsCubit>().state.environment ==
+        Environment.testnet;
+    final mempoolTxLinks = dlcOrderMempoolTxExplorerLinks(
+      order,
+      isTestnet: isTestnet,
+      includeFunding: showFundingTxLink,
+      includeSettlement: showSettlementTxLink,
+    );
     return Container(
       margin: const EdgeInsets.only(top: 6),
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
@@ -2196,6 +2221,17 @@ class _CompactOrderEntry extends StatelessWidget {
           Row(
             mainAxisSize: MainAxisSize.min,
             children: [
+              for (final link in mempoolTxLinks)
+                IconButton(
+                  visualDensity: VisualDensity.compact,
+                  tooltip: 'View ${link.label.toLowerCase()} on mempool.space',
+                  onPressed: () => _openExternalUrl(link.url),
+                  icon: Icon(
+                    Icons.open_in_new,
+                    size: 20,
+                    color: colorScheme.primary,
+                  ),
+                ),
               if (order.inFlightPhase != null) ...[
                     IconButton(
                       visualDensity: VisualDensity.compact,
@@ -2296,6 +2332,18 @@ void _showOrderInFlightDialog(BuildContext context, DlcOrderSummary order) {
 }
 
 void _showOrderInfoDialog(BuildContext context, DlcOrderSummary order) {
+  final isTestnet =
+      context.read<SettingsCubit>().state.environment ==
+      Environment.testnet;
+  final mempoolInfoLinks = dlcOrderInfoMempoolTxExplorerLinks(
+    order,
+    isTestnet: isTestnet,
+  );
+  final dlcId = dlcExplorerDlcIdForOrder(order);
+  final walletToken = context.read<DlcCubit>().state.auth?.walletToken;
+  final canOpenDlcExplorer =
+      dlcId != null && walletToken != null && walletToken.isNotEmpty;
+
   showDialog<void>(
     context: context,
     builder: (dialogContext) => AlertDialog(
@@ -2322,7 +2370,13 @@ void _showOrderInfoDialog(BuildContext context, DlcOrderSummary order) {
             _InfoRow('Side', _formatOrderSide(order.side)),
             _InfoRow('Role', formatDlcOrderRole(order)),
             _InfoRow('Order status', order.status),
-            _InfoRow('DLC status', order.dlcStatus ?? '-'),
+            _InfoRow('DLC status', formatDlcStatusLabel(order)),
+            for (final link in mempoolInfoLinks)
+              _InfoLinkRow(
+                label: link.label,
+                linkText: 'see here',
+                onTap: () => _openExternalUrl(link.url),
+              ),
             _InfoRow('Partner fees', _formatOrderSats(order.partnerFeeSat)),
             _InfoRow('Network fees', _formatOrderSats(order.networkFeeSat)),
             _InfoRow('Order ID', order.orderId),
@@ -2331,11 +2385,45 @@ void _showOrderInfoDialog(BuildContext context, DlcOrderSummary order) {
         ),
       ),
       actions: [
+        if (canOpenDlcExplorer)
+          TextButton(
+            onPressed: () {
+              Navigator.of(dialogContext).pop();
+              _openDlcExplorer(context, dlcId: dlcId);
+            },
+            child: const Text('DLC Explorer'),
+          ),
         TextButton(
           onPressed: () => Navigator.of(dialogContext).pop(),
           child: const Text('Close'),
         ),
       ],
+    ),
+  );
+}
+
+void _openDlcExplorer(BuildContext context, {required String dlcId}) {
+  final walletToken = context.read<DlcCubit>().state.auth?.walletToken;
+  if (walletToken == null || walletToken.isEmpty) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('DLC wallet token is missing. Re-register this wallet.'),
+      ),
+    );
+    return;
+  }
+
+  final environment =
+      context.read<SettingsCubit>().state.environment ?? Environment.mainnet;
+  final dashboardUrl = dlcExplorerDashboardPostUrl(environment);
+
+  Navigator.of(context).push(
+    MaterialPageRoute<void>(
+      builder: (_) => DlcExplorerScreen(
+        dashboardUrl: dashboardUrl,
+        walletToken: walletToken,
+        dlcId: dlcId,
+      ),
     ),
   );
 }
@@ -2361,6 +2449,54 @@ class _InfoRow extends StatelessWidget {
         ],
       ),
     );
+  }
+}
+
+class _InfoLinkRow extends StatelessWidget {
+  const _InfoLinkRow({
+    required this.label,
+    required this.linkText,
+    required this.onTap,
+  });
+
+  final String label;
+  final String linkText;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 112,
+            child: Text(label, style: theme.textTheme.labelMedium),
+          ),
+          Expanded(
+            child: InkWell(
+              onTap: onTap,
+              child: Text(
+                linkText,
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: theme.colorScheme.primary,
+                  decoration: TextDecoration.underline,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+Future<void> _openExternalUrl(String url) async {
+  final uri = Uri.parse(url);
+  if (await canLaunchUrl(uri)) {
+    await launchUrl(uri, mode: LaunchMode.externalApplication);
   }
 }
 

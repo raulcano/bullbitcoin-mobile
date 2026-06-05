@@ -49,6 +49,26 @@ void main() {
       );
     });
 
+    test('detects funding_broadcasted status transition', () {
+      expect(
+        dlcCoordinatorUtxoProjectionKind(
+          current: _order(orderId: 'o1', dlcStatus: 'funding_broadcasted'),
+          previous: _order(orderId: 'o1', dlcStatus: 'signed'),
+        ),
+        DlcCoordinatorUtxoProjectionKind.fundingBroadcast,
+      );
+    });
+
+    test('detects funding_broadcasted on first observed snapshot', () {
+      expect(
+        dlcCoordinatorUtxoProjectionKind(
+          current: _order(orderId: 'o1', dlcStatus: 'funding_broadcasted'),
+          previous: null,
+        ),
+        DlcCoordinatorUtxoProjectionKind.fundingBroadcast,
+      );
+    });
+
     test('detects settlement broadcast status transition', () {
       expect(
         dlcCoordinatorUtxoProjectionKind(
