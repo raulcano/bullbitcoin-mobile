@@ -102,9 +102,7 @@ bool isTakerAwaitingMakerSign(DlcOrderSummary order) {
   }
 
   final hasDlc = order.dlcId != null && order.dlcId!.isNotEmpty;
-  final hasMatch =
-      order.matchedOrderId != null && order.matchedOrderId!.isNotEmpty;
-  return hasDlc || hasMatch;
+  return hasDlc || order.hasMatchHistory;
 }
 
 /// Resolves hourglass phase from coordinator order fields (no local override).

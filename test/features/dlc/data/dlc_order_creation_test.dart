@@ -678,9 +678,7 @@ Map<String, dynamic> _successOrder({String orderId = 'order-1'}) => {
   'offer_object_hex': 'offer-hex',
   'accept_object_hex': null,
   'pending_match_accept': false,
-  'matched_order_id': null,
-  'matched_dlc_id': null,
-  'matched_offer_object_hex': null,
+  'executions': <Map<String, dynamic>>[],
 };
 
 class _RecordingAdapter implements HttpClientAdapter {

@@ -4,14 +4,16 @@ import 'package:bb_mobile/features/dlc/domain/dlc_explorer_utils.dart';
 import 'package:bb_mobile/features/dlc/domain/dlc_models.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-DlcOrderSummary _order({String? dlcId, String? matchedDlcId}) {
+DlcOrderSummary _order({
+  String? dlcId,
+  String? executionDlcId,
+  String executionStatus = 'executed',
+}) {
   return DlcOrderSummary(
     orderId: 'order-1',
     dlcId: dlcId,
     status: 'filled',
     pendingMatchAccept: false,
-    matchedOrderId: null,
-    matchedDlcId: matchedDlcId,
     isMaker: true,
     matchRole: 'maker',
     signRequired: null,
@@ -32,6 +34,15 @@ DlcOrderSummary _order({String? dlcId, String? matchedDlcId}) {
     fundingTxid: null,
     closingTxid: null,
     refundTxid: null,
+    executions: [
+      if (executionDlcId != null)
+        DlcOrderExecution(
+          tradeId: 'trade-1',
+          dlcId: executionDlcId,
+          role: 'maker',
+          status: executionStatus,
+        ),
+    ],
   );
 }
 
@@ -40,15 +51,15 @@ void main() {
     test('prefers order dlcId', () {
       expect(
         dlcExplorerDlcIdForOrder(
-          _order(dlcId: 'dlc-primary', matchedDlcId: 'dlc-other'),
+          _order(dlcId: 'dlc-primary', executionDlcId: 'dlc-other'),
         ),
         'dlc-primary',
       );
     });
 
-    test('falls back to matchedDlcId', () {
+    test('falls back to latest execution dlc id', () {
       expect(
-        dlcExplorerDlcIdForOrder(_order(matchedDlcId: 'dlc-matched')),
+        dlcExplorerDlcIdForOrder(_order(executionDlcId: 'dlc-matched')),
         'dlc-matched',
       );
     });

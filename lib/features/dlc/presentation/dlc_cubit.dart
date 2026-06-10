@@ -69,6 +69,7 @@ class DlcCubit extends Cubit<DlcState> {
   }
 
   Future<void> load() async {
+    await _repository.runDlcSchemaCutoverIfNeeded();
     // The cubit is a lazy singleton, so this can be called on the initial
     // navigation to /dlcs AND on every re-entry from another tab. On re-entry
     // the cubit already has the active wallet + catalog hydrated — avoid
@@ -1718,8 +1719,6 @@ class DlcCubit extends Cubit<DlcState> {
       status: matchIntent ? 'pending_accept' : 'open',
       pendingMatchAccept: matchIntent,
       inFlightPhase: phase,
-      matchedOrderId: null,
-      matchedDlcId: null,
       isMaker: matchIntent ? false : true,
       matchRole: matchIntent ? 'taker' : 'maker',
       signRequired: null,

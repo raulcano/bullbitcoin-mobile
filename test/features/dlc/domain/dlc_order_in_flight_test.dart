@@ -18,8 +18,6 @@ DlcOrderSummary _order({
     status: status,
     pendingMatchAccept: pendingMatchAccept,
     inFlightPhase: inFlightPhase,
-    matchedOrderId: null,
-    matchedDlcId: null,
     isMaker: isMaker,
     matchRole: matchRole,
     signRequired: signRequired,
@@ -157,7 +155,18 @@ void main() {
         matchRole: 'taker',
         pendingMatchAccept: false,
         dlcStatus: 'accepted',
-      ).copyWith(signRequired: null, matchedOrderId: 'maker-order-1');
+      ).copyWith(
+        signRequired: null,
+        executions: [
+          DlcOrderExecution(
+            tradeId: 'trade-1',
+            dlcId: 'dlc-1',
+            role: 'taker',
+            counterpartyOrderId: 'maker-order-1',
+            status: 'pending_accept',
+          ),
+        ],
+      );
       expect(isTakerAwaitingMakerSign(order), isTrue);
       expect(
         resolveOrderInFlightPhase(order),

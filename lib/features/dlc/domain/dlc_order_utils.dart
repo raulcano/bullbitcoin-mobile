@@ -162,6 +162,11 @@ String formatDlcOrderRole(DlcOrderSummary order) {
 
 /// Resolves `maker` / `taker` from coordinator fields and book lifecycle heuristics.
 String? inferDlcOrderMatchRole(DlcOrderSummary order) {
+  // Latest execution is the source of truth for the order's role under the
+  // canonical-DLC model.
+  final latestRole = order.latestExecution?.role.toLowerCase().trim();
+  if (latestRole == 'maker' || latestRole == 'taker') return latestRole;
+
   final explicitRole = order.matchRole?.toLowerCase().trim();
   if (explicitRole == 'maker' || explicitRole == 'taker') {
     return explicitRole;
@@ -171,13 +176,11 @@ String? inferDlcOrderMatchRole(DlcOrderSummary order) {
   if (order.pendingMatchAccept) return 'taker';
 
   final status = order.status.toLowerCase();
-  final hasMatch =
-      order.matchedOrderId != null && order.matchedOrderId!.isNotEmpty;
 
-  if (status == 'open' && !hasMatch) {
+  if (status == 'open' && !order.hasMatchHistory) {
     return 'maker';
   }
-  if (hasMatch && status == 'pending_accept') {
+  if (order.hasMatchHistory && status == 'pending_accept') {
     return 'maker';
   }
   return null;

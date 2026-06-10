@@ -18,6 +18,10 @@ class DlcNegotiationStorage {
   String _storageKey(Environment environment) =>
       environment.isTestnet ? _testnetKey : _mainnetKey;
 
+  Future<void> clear(Environment environment) async {
+    await _secureStorage.saveValue(key: _storageKey(environment), value: '');
+  }
+
   Future<Map<String, dynamic>?> getOrderState({
     required Environment environment,
     required String walletOriginId,

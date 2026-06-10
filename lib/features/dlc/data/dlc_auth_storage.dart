@@ -98,6 +98,31 @@ class DlcAuthStorage {
     await _secureStorage.deleteValue(_storageKey(environment));
   }
 
+  /// Persisted DLC client schema version.
+  ///
+  /// Stored under a separate key from the credentials payload so an upgrade
+  /// resetting the auth blob (or vice versa) does not corrupt either.
+  static const _schemaVersionMainnetKey = 'dlc_schema_version_mainnet';
+  static const _schemaVersionTestnetKey = 'dlc_schema_version_testnet';
+
+  String _schemaVersionKey(Environment environment) =>
+      environment.isTestnet
+          ? _schemaVersionTestnetKey
+          : _schemaVersionMainnetKey;
+
+  Future<int> getDlcSchemaVersion(Environment environment) async {
+    final raw = await _secureStorage.getValue(_schemaVersionKey(environment));
+    if (raw == null || raw.isEmpty) return 0;
+    return int.tryParse(raw.trim()) ?? 0;
+  }
+
+  Future<void> setDlcSchemaVersion(Environment environment, int version) async {
+    await _secureStorage.saveValue(
+      key: _schemaVersionKey(environment),
+      value: version.toString(),
+    );
+  }
+
   Future<void> _saveAll(
     Environment environment,
     List<DlcWalletAuth> entries, {

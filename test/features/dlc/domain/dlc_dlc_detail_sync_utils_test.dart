@@ -1,7 +1,5 @@
 import 'package:bb_mobile/features/dlc/domain/dlc_dlc_detail_sync_utils.dart';
 import 'package:bb_mobile/features/dlc/domain/dlc_models.dart';
-import 'package:bb_mobile/features/dlc/domain/dlc_order_in_flight.dart';
-import 'package:bb_mobile/features/dlc/domain/dlc_order_utils.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 DlcOrderSummary _order({
@@ -20,8 +18,6 @@ DlcOrderSummary _order({
     status: status,
     pendingMatchAccept: pendingMatchAccept,
     inFlightPhase: inFlightPhase,
-    matchedOrderId: null,
-    matchedDlcId: null,
     isMaker: null,
     matchRole: null,
     signRequired: null,

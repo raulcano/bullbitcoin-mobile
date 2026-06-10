@@ -2381,6 +2381,22 @@ void _showOrderInfoDialog(BuildContext context, DlcOrderSummary order) {
             _InfoRow('Network fees', _formatOrderSats(order.networkFeeSat)),
             _InfoRow('Order ID', order.orderId),
             _InfoRow('Created', _formatOrderDate(order.createdAt)),
+            if (order.executions.length > 1) ...[
+              const SizedBox(height: 12),
+              const Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  'Match history',
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
+              ),
+              for (var i = 0; i < order.executions.length; i += 1)
+                _DlcExecutionInfoBlock(
+                  execution: order.executions[i],
+                  index: i + 1,
+                  total: order.executions.length,
+                ),
+            ],
           ],
         ),
       ),
@@ -2446,6 +2462,42 @@ class _InfoRow extends StatelessWidget {
             child: Text(label, style: Theme.of(context).textTheme.labelMedium),
           ),
           Expanded(child: SelectableText(value)),
+        ],
+      ),
+    );
+  }
+}
+
+/// Compact summary of one match attempt for the order info dialog.
+class _DlcExecutionInfoBlock extends StatelessWidget {
+  const _DlcExecutionInfoBlock({
+    required this.execution,
+    required this.index,
+    required this.total,
+  });
+
+  final DlcOrderExecution execution;
+  final int index;
+  final int total;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Attempt $index of $total — ${execution.role} (${execution.status})',
+            style: theme.textTheme.labelLarge,
+          ),
+          _InfoRow('Trade ID', execution.tradeId),
+          _InfoRow('DLC ID', execution.dlcId),
+          if (execution.counterpartyOrderId != null)
+            _InfoRow('Counterparty', execution.counterpartyOrderId!),
+          if (execution.lastErrorReason != null)
+            _InfoRow('Error', execution.lastErrorReason!),
         ],
       ),
     );

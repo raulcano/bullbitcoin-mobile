@@ -11,8 +11,8 @@ String? dlcExplorerDlcIdForOrder(DlcOrderSummary order) {
   final direct = order.dlcId?.trim();
   if (direct != null && direct.isNotEmpty) return direct;
 
-  final matched = order.matchedDlcId?.trim();
-  if (matched != null && matched.isNotEmpty) return matched;
+  final latest = order.latestExecution?.dlcId.trim();
+  if (latest != null && latest.isNotEmpty) return latest;
 
   return null;
 }

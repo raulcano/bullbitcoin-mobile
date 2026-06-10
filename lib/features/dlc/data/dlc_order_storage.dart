@@ -15,6 +15,10 @@ class DlcOrderStorage {
   String _storageKey(Environment environment) =>
       environment.isTestnet ? _testnetKey : _mainnetKey;
 
+  Future<void> clear(Environment environment) async {
+    await _secureStorage.saveValue(key: _storageKey(environment), value: '');
+  }
+
   Future<void> upsertOrder({
     required Environment environment,
     required String walletOriginId,

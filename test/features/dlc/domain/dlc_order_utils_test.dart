@@ -11,14 +11,44 @@ DlcOrderSummary _order({
   bool? isMaker,
   String? matchedOrderId,
   String? lastErrorReason,
+  List<DlcOrderExecution> executions = const [],
 }) {
+  // Materialize a default execution from legacy `matchedOrderId` so existing
+  // tests still cover the matched-order code paths after the canonical-DLC
+  // migration. Tests that explicitly pass `executions` override this.
+  String resolvedRole;
+  if (matchRole != null) {
+    resolvedRole = matchRole;
+  } else if (isMaker == true) {
+    resolvedRole = 'maker';
+  } else if (isMaker == false) {
+    resolvedRole = 'taker';
+  } else if (pendingMatchAccept) {
+    resolvedRole = 'taker';
+  } else {
+    resolvedRole = 'maker';
+  }
+  final resolvedExecutions = executions.isNotEmpty
+      ? executions
+      : (matchedOrderId == null || matchedOrderId.isEmpty)
+          ? const <DlcOrderExecution>[]
+          : <DlcOrderExecution>[
+              DlcOrderExecution(
+                tradeId: 'trade-1',
+                dlcId: dlcId ?? 'dlc-1',
+                role: resolvedRole,
+                counterpartyOrderId: matchedOrderId,
+                status: status.toLowerCase() == 'filled'
+                    ? 'executed'
+                    : 'pending_accept',
+              ),
+            ];
+
   return DlcOrderSummary(
     orderId: 'order-1',
     dlcId: dlcId,
     status: status,
     pendingMatchAccept: pendingMatchAccept,
-    matchedOrderId: matchedOrderId,
-    matchedDlcId: null,
     isMaker: isMaker,
     matchRole: matchRole,
     signRequired: null,
@@ -39,6 +69,7 @@ DlcOrderSummary _order({
     fundingTxid: null,
     closingTxid: null,
     refundTxid: null,
+    executions: resolvedExecutions,
   );
 }
 
@@ -587,8 +618,6 @@ void main() {
         dlcId: null,
         status: 'open',
         pendingMatchAccept: false,
-        matchedOrderId: null,
-        matchedDlcId: null,
         isMaker: null,
         matchRole: null,
         signRequired: null,
@@ -640,36 +669,7 @@ void main() {
         dlcOrderbookRowIsOwnWalletOpenOrder(
           row: row,
           isAskRow: true,
-          orders: [
-            DlcOrderSummary(
-              orderId: buy.orderId,
-              dlcId: buy.dlcId,
-              status: buy.status,
-              pendingMatchAccept: buy.pendingMatchAccept,
-              matchedOrderId: buy.matchedOrderId,
-              matchedDlcId: buy.matchedDlcId,
-              isMaker: buy.isMaker,
-              matchRole: buy.matchRole,
-              signRequired: buy.signRequired,
-              dlcStatus: buy.dlcStatus,
-              settlementType: buy.settlementType,
-              confirmationStatus: buy.confirmationStatus,
-              instrumentId: buy.instrumentId,
-              side: 'buy',
-              quantity: buy.quantity,
-              price: buy.price,
-              createdAt: buy.createdAt,
-              sideCollateralSat: buy.sideCollateralSat,
-              partnerFeeSat: buy.partnerFeeSat,
-              networkFeeSat: buy.networkFeeSat,
-              lastErrorReason: buy.lastErrorReason,
-              lastErrorMessage: buy.lastErrorMessage,
-              oracleOutcomeValue: buy.oracleOutcomeValue,
-              fundingTxid: buy.fundingTxid,
-              closingTxid: buy.closingTxid,
-              refundTxid: buy.refundTxid,
-            ),
-          ],
+          orders: [buy.copyWith(side: 'buy')],
           orderbookSideRows: [row],
           selectedInstrumentId: 'BTC-18MAR26-74100-C',
         ),
@@ -688,8 +688,6 @@ void main() {
           dlcId: null,
           status: 'open',
           pendingMatchAccept: false,
-          matchedOrderId: null,
-          matchedDlcId: null,
           isMaker: null,
           matchRole: null,
           signRequired: null,

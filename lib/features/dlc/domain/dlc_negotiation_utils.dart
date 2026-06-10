@@ -69,9 +69,55 @@ bool isAcceptSigningNoLongerRequired(Object error) {
           lower.contains('not awaiting accept submission'));
 }
 
+/// True when this wallet's order is the maker side of the latest match.
+///
+/// Latest execution is authoritative under the canonical-DLC model. Falls back
+/// to per-wallet coordinator signals (`is_maker`, `match_role`, `sign_required`)
+/// when no executions[] have been surfaced yet. Coordinators that have not
+/// rolled out the canonical-DLC `executions[]` field continue to expose the
+/// per-wallet flags above; the negotiation loop must keep working against
+/// either schema.
 bool isDlcMakerForSign(DlcOrderSummary order) {
+  final latest = order.latestExecution;
+  if (latest != null) return latest.isMaker;
+  // Positive explicit signals.
   if (order.isMaker == true) return true;
-  return order.matchRole?.toLowerCase() == 'maker';
+  if (order.matchRole?.toLowerCase() == 'maker') return true;
+  // Contradictory explicit role marker — never claim maker via fallback.
+  if (order.isMaker == false) return false;
+  if (order.matchRole?.toLowerCase() == 'taker') return false;
+  // `sign_required` is per-wallet: the coordinator only sets it on the maker
+  // side when sign-context is ready. Treat it as an authoritative maker signal
+  // when the order has reached the post-accept lifecycle and no contradicting
+  // role marker is present.
+  if (order.signRequired == true) {
+    final status = order.status.toLowerCase();
+    final dlcStatus = order.dlcStatus?.toLowerCase();
+    if (status == 'filled' || dlcStatus == 'accepted') return true;
+  }
+  return false;
+}
+
+/// True when the latest execution gives this wallet the taker role.
+///
+/// Falls back to per-wallet coordinator signals when no executions[] are
+/// present. `pending_match_accept: true` is the documented per-wallet signal
+/// that this wallet is the taker for the active match (see
+/// `WALLET-API-INTEGRATION-GUIDE_BULLBITCOIN`, "Run The Taker Accept Flow").
+bool isDlcTakerForAccept(DlcOrderSummary order) {
+  final latest = order.latestExecution;
+  if (latest != null) return latest.isTaker;
+  // Positive explicit signals.
+  if (order.isMaker == false) return true;
+  if (order.matchRole?.toLowerCase() == 'taker') return true;
+  // Contradictory explicit role marker — never claim taker via fallback.
+  if (order.isMaker == true) return false;
+  if (order.matchRole?.toLowerCase() == 'maker') return false;
+  // Only the taker side of an active match has `pending_match_accept: true`.
+  // The maker observes `pending_accept` but with `pending_match_accept: false`,
+  // so this fallback never misclassifies the maker.
+  if (order.pendingMatchAccept) return true;
+  return false;
 }
 
 /// Maker must sign after match when DLC is accepted and coordinator requests it.

@@ -50,7 +50,55 @@ class DlcRepository {
 
   final Map<String, _CachedDlcDetail> _dlcDetailCacheByKey = {};
 
+  /// Bump when the canonical-DLC migration changes the local cache shape.
+  ///
+  /// Old wallets stored an ad-hoc maker DLC + counterparty DLC pair, plus
+  /// `matched_order_id` / `matched_dlc_id` snapshots that the new model no
+  /// longer understands. On first launch after upgrade, we wipe the local
+  /// order/negotiation/idempotency caches (auth/keys are preserved) so the
+  /// next list refresh rebuilds state from `executions[]`.
+  static const int _dlcSchemaVersion = 2;
+  bool _dlcSchemaCutoverRan = false;
+
   void clearDlcDetailCache() => _dlcDetailCacheByKey.clear();
+
+  /// One-time cleanup that runs before the first `listOrders()` after upgrade.
+  ///
+  /// Idempotent: re-entry checks both an in-memory flag and the persisted
+  /// schema version. Safe to call from cubit init or any DLC route entry.
+  Future<void> runDlcSchemaCutoverIfNeeded() async {
+    if (_dlcSchemaCutoverRan) return;
+    final env = await _environment();
+    final stored = await _authStorage.getDlcSchemaVersion(env);
+    if (stored >= _dlcSchemaVersion) {
+      _dlcSchemaCutoverRan = true;
+      return;
+    }
+
+    debugPrint(
+      'DLC schema cutover: clearing legacy order/negotiation/idempotency caches '
+      '(found v$stored, upgrading to v$_dlcSchemaVersion).',
+    );
+    try {
+      await _orderStorage.clear(env);
+    } catch (e) {
+      debugPrint('DLC schema cutover: order storage clear failed: $e');
+    }
+    try {
+      await _negotiationStorage.clear(env);
+    } catch (e) {
+      debugPrint('DLC schema cutover: negotiation storage clear failed: $e');
+    }
+    try {
+      await _idempotencyStorage.clear(env);
+    } catch (e) {
+      debugPrint('DLC schema cutover: idempotency storage clear failed: $e');
+    }
+    _dlcDetailCacheByKey.clear();
+    await _authStorage.setDlcSchemaVersion(env, _dlcSchemaVersion);
+    _dlcSchemaCutoverRan = true;
+  }
+
 
   Future<Environment> _environment() async =>
       (await _settingsRepository.fetch()).environment;
@@ -844,9 +892,11 @@ class DlcRepository {
         'status': existing.status,
         'created_at': existing.createdAt?.toUtc().toIso8601String(),
         'pending_match_accept': existing.pendingMatchAccept,
-        'matched_order_id': existing.matchedOrderId,
         'match_role': existing.matchRole,
         'is_maker': existing.isMaker,
+        'executions': [
+          for (final execution in existing.executions) execution.toJson(),
+        ],
       },
       idempotencyKey: idempotencyKey,
       draft: draft,
@@ -1036,11 +1086,22 @@ class DlcRepository {
       wallet: wallet,
     );
 
+    Future<DlcOrderSummary> readMerged({String? prevDlcId}) async {
+      final json = await _datasource.getOrder(
+        token: auth.walletToken,
+        orderId: orderId,
+      );
+      final local = await _orderStorage.getByOrderId(
+        environment: env,
+        walletOriginId: auth.walletOriginId,
+        orderId: orderId,
+      );
+      return _mapOrder(_mergeCoordinatorOrderJson(remote: json, local: local));
+    }
+
     DlcOrderSummary current;
     try {
-      current = _mapOrder(
-        await _datasource.getOrder(token: auth.walletToken, orderId: orderId),
-      );
+      current = await readMerged();
     } catch (e) {
       if (isCoordinatorResourceNotFound(e)) {
         await _purgeLocalCoordinatorSnapshot(
@@ -1056,9 +1117,7 @@ class DlcRepository {
     while (steps < maxSteps) {
       steps += 1;
       try {
-        current = _mapOrder(
-          await _datasource.getOrder(token: auth.walletToken, orderId: orderId),
-        );
+        current = await readMerged(prevDlcId: current.dlcId);
       } catch (e) {
         if (isCoordinatorResourceNotFound(e)) {
           await _purgeLocalCoordinatorSnapshot(
@@ -1072,6 +1131,10 @@ class DlcRepository {
       }
 
       if (needsDlcTakerAccept(current)) {
+        if (!isDlcTakerForAccept(current)) {
+          // Maker side has nothing to do during the taker accept window.
+          break;
+        }
         await _submitAcceptArtifacts(
           environment: env,
           token: auth.walletToken,
@@ -1083,6 +1146,9 @@ class DlcRepository {
       }
 
       if (needsDlcMakerSign(current)) {
+        if (!isDlcMakerForSign(current)) {
+          break;
+        }
         try {
           await _submitMakerSignArtifacts(
             environment: env,
@@ -1118,9 +1184,7 @@ class DlcRepository {
     }
 
     try {
-      current = _mapOrder(
-        await _datasource.getOrder(token: auth.walletToken, orderId: orderId),
-      );
+      current = await readMerged(prevDlcId: current.dlcId);
     } catch (e) {
       if (isCoordinatorResourceNotFound(e)) {
         await _purgeLocalCoordinatorSnapshot(
@@ -1238,6 +1302,12 @@ class DlcRepository {
     );
 
     if (needsDlcTakerAccept(current)) {
+      if (!isDlcTakerForAccept(current)) {
+        // Coordinator marked the order as awaiting accept signing but the
+        // latest execution role is `maker`. Treat as a pending-accept
+        // notification only — never call /accept-context as a maker.
+        return null;
+      }
       await _submitAcceptArtifacts(
         environment: env,
         token: auth.walletToken,
@@ -1253,6 +1323,9 @@ class DlcRepository {
     }
 
     if (needsDlcMakerSign(current) && current.dlcId != null) {
+      if (!isDlcMakerForSign(current)) {
+        return null;
+      }
       await _submitMakerSignArtifacts(
         environment: env,
         token: auth.walletToken,
@@ -1887,36 +1960,13 @@ class DlcRepository {
     Map<String, dynamic> detail,
   ) {
     final merged = _mergeDlcDetailIntoOrder(current, detail);
-    return DlcOrderSummary(
-      orderId: merged.orderId,
-      dlcId: merged.dlcId,
-      status: merged.status,
-      pendingMatchAccept: merged.pendingMatchAccept,
-      matchedOrderId: merged.matchedOrderId,
-      matchedDlcId: merged.matchedDlcId,
-      isMaker: merged.isMaker,
-      matchRole: merged.matchRole,
-      signRequired: merged.signRequired,
+    return merged.copyWith(
       dlcStatus: (settlement['status'] ?? merged.dlcStatus)?.toString(),
       settlementType: (settlement['settlement_type'] ?? merged.settlementType)
           ?.toString(),
       confirmationStatus:
           (detail['confirmation_status'] ?? merged.confirmationStatus)
               ?.toString(),
-      instrumentId: merged.instrumentId,
-      side: merged.side,
-      quantity: merged.quantity,
-      price: merged.price,
-      createdAt: merged.createdAt,
-      sideCollateralSat: merged.sideCollateralSat,
-      partnerFeeSat: merged.partnerFeeSat,
-      networkFeeSat: merged.networkFeeSat,
-      lastErrorReason: merged.lastErrorReason,
-      lastErrorMessage: merged.lastErrorMessage,
-      oracleOutcomeValue: merged.oracleOutcomeValue,
-      fundingTxid: merged.fundingTxid,
-      closingTxid: merged.closingTxid,
-      refundTxid: merged.refundTxid,
     );
   }
 
@@ -1924,33 +1974,16 @@ class DlcRepository {
     DlcOrderSummary o,
     Map<String, dynamic> d,
   ) {
-    return DlcOrderSummary(
-      orderId: o.orderId,
-      dlcId: o.dlcId,
-      status: o.status,
-      pendingMatchAccept: o.pendingMatchAccept,
-      matchedOrderId: o.matchedOrderId,
-      matchedDlcId: o.matchedDlcId,
-      isMaker: o.isMaker,
-      matchRole: o.matchRole,
-      signRequired: o.signRequired,
+    return o.copyWith(
       dlcStatus: d['status']?.toString() ?? o.dlcStatus,
       settlementType: d['settlement_type']?.toString() ?? o.settlementType,
-      confirmationStatus: o.confirmationStatus,
-      instrumentId: o.instrumentId,
-      side: o.side,
-      quantity: o.quantity,
-      price: o.price,
-      createdAt: o.createdAt,
-      sideCollateralSat:
-          dlcSellerCollateralSats(
+      sideCollateralSat: dlcSellerCollateralSats(
             json: d,
             side: o.side,
             quantity: o.quantity,
           ) ??
           o.sideCollateralSat,
-      partnerFeeSat:
-          _readNumber(d, [
+      partnerFeeSat: _readNumber(d, [
             'partner_fee_sats',
             'partner_fee_sat',
             'partner_fee',
@@ -1958,8 +1991,7 @@ class DlcRepository {
             'fees_paid_to_partner',
           ]) ??
           o.partnerFeeSat,
-      networkFeeSat:
-          _readNumber(d, [
+      networkFeeSat: _readNumber(d, [
             'network_fee_sats',
             'network_fee_sat',
             'network_fee',
@@ -1991,6 +2023,12 @@ class DlcRepository {
     if (remote['is_maker'] == null && local['is_maker'] != null) {
       merged['is_maker'] = local['is_maker'];
     }
+    // Coordinator response is authoritative for `executions[]` once present;
+    // only fall back to a local snapshot's executions when remote omits the
+    // field (older cache).
+    if (remote['executions'] is! List && local['executions'] is List) {
+      merged['executions'] = local['executions'];
+    }
     if (remote['pending_match_accept'] != true &&
         local['pending_match_accept'] == true) {
       final remoteStatus = (remote['status'] as String?)?.toLowerCase();
@@ -2005,42 +2043,103 @@ class DlcRepository {
     final status = json['status'] as String? ?? 'unknown';
     final pendingMatchAccept = json['pending_match_accept'] as bool? ?? false;
 
-    final matchRoleRaw =
-        json['match_role'] as String? ?? json['role'] as String?;
+    final executions = <DlcOrderExecution>[];
+    final rawExecutions = json['executions'];
+    if (rawExecutions is List) {
+      for (final entry in rawExecutions) {
+        final parsed = DlcOrderExecution.tryFromJson(entry);
+        if (parsed != null) executions.add(parsed);
+      }
+    }
+
+    final latest = executions.isNotEmpty ? executions.last : null;
+
+    final topLevelDlcId = (json['dlc_id'] as String?)?.trim();
+    final dlcId = (topLevelDlcId != null && topLevelDlcId.isNotEmpty)
+        ? topLevelDlcId
+        : latest?.dlcId;
+
+    final dlcStatus =
+        (json['dlc_status'] as String?) ?? latest?.dlcStatus;
+
+    // Derive role from the latest execution. Older snapshots / coordinators
+    // that have not rolled out the canonical-DLC `executions[]` yet still
+    // carry `match_role` / `is_maker`; use them as the next fallback. As a
+    // last resort, infer from per-wallet coordinator signals
+    // (`pending_match_accept` always identifies the taker side, and
+    // `sign_required` identifies the maker side once the DLC moves past
+    // accept) so the UI and negotiation worker stay correct even when the
+    // coordinator omits the explicit role fields for an active match.
+    String? matchRoleRaw = latest?.role ??
+        json['match_role'] as String? ??
+        json['role'] as String?;
     bool? isMaker = json['is_maker'] as bool?;
-    final role = matchRoleRaw?.toLowerCase();
-    if (isMaker == null && role == 'maker') {
-      isMaker = true;
-    } else if (isMaker == null && role == 'taker') {
-      isMaker = false;
+    if (latest != null) {
+      isMaker = latest.isMaker;
+    } else {
+      final role = matchRoleRaw?.toLowerCase();
+      if (isMaker == null && role == 'maker') {
+        isMaker = true;
+      } else if (isMaker == null && role == 'taker') {
+        isMaker = false;
+      }
+      if (matchRoleRaw == null || matchRoleRaw.isEmpty) {
+        if (pendingMatchAccept) {
+          matchRoleRaw = 'taker';
+          isMaker ??= false;
+        } else if (json['sign_required'] == true) {
+          final orderStatus = status.toLowerCase();
+          final dlcStatusLower = (json['dlc_status'] as String?)?.toLowerCase();
+          if (orderStatus == 'filled' || dlcStatusLower == 'accepted') {
+            matchRoleRaw = 'maker';
+            isMaker ??= true;
+          }
+        }
+      }
     }
 
     final qty = json['quantity'];
     final price = json['price'];
+    final filledQty = json['filled_quantity'] ?? json['filled_qty'];
+    final remainingQty = json['remaining_quantity'] ?? json['remaining_qty'];
     final side = json['side'] as String?;
+
+    double? toDouble(dynamic value) {
+      if (value is num) return value.toDouble();
+      if (value is String) return double.tryParse(value.trim());
+      return null;
+    }
+
+    final fundingTxid = (json['funding_txid'] as String?) ?? latest?.fundingTxid;
+    final closingTxid = (json['closing_txid'] as String?) ?? latest?.closingTxid;
+    final refundTxid = (json['refund_txid'] as String?) ?? latest?.refundTxid;
+    final lastErrorReason =
+        (json['last_error_reason'] as String?) ?? latest?.lastErrorReason;
+    final lastErrorMessage =
+        (json['last_error_message'] as String?) ?? latest?.lastErrorMessage;
 
     return DlcOrderSummary(
       orderId: json['order_id'] as String? ?? json['id'] as String? ?? '',
-      dlcId: json['dlc_id'] as String?,
+      dlcId: dlcId,
       status: status,
       pendingMatchAccept: pendingMatchAccept,
-      matchedOrderId: json['matched_order_id'] as String?,
-      matchedDlcId: json['matched_dlc_id'] as String?,
       isMaker: isMaker,
       matchRole: matchRoleRaw,
       signRequired: json['sign_required'] as bool?,
-      dlcStatus: json['dlc_status'] as String?,
+      dlcStatus: dlcStatus,
       settlementType: json['settlement_type'] as String?,
       confirmationStatus: json['confirmation_status'] as String?,
       instrumentId: json['instrument_id'] as String?,
       side: side,
-      quantity: qty is num ? qty.toDouble() : null,
-      price: price is num ? price.toDouble() : null,
+      quantity: toDouble(qty),
+      price: toDouble(price),
+      filledQuantity: toDouble(filledQty),
+      remainingQuantity: toDouble(remainingQty),
       createdAt: DateTime.tryParse(json['created_at']?.toString() ?? ''),
       sideCollateralSat: dlcSellerCollateralSats(
         json: json,
         side: side,
-        quantity: qty is num ? qty.toDouble() : null,
+        quantity: toDouble(qty),
       ),
       partnerFeeSat: _readNumber(json, [
         'partner_fee_sats',
@@ -2056,12 +2155,18 @@ class DlcRepository {
         'mining_fee_sats',
         'mining_fee',
       ]),
-      lastErrorReason: json['last_error_reason'] as String?,
-      lastErrorMessage: json['last_error_message'] as String?,
+      lastErrorReason: lastErrorReason,
+      lastErrorMessage: lastErrorMessage,
       oracleOutcomeValue: json['oracle_outcome_value'] as String?,
-      fundingTxid: json['funding_txid'] as String?,
-      closingTxid: json['closing_txid'] as String?,
-      refundTxid: json['refund_txid'] as String?,
+      fundingTxid: fundingTxid,
+      closingTxid: closingTxid,
+      refundTxid: refundTxid,
+      // Draft offer hex is only meaningful while no execution exists.
+      draftOfferObjectHex: executions.isEmpty
+          ? (json['offer_object_hex'] as String?) ??
+              (json['draft_offer_object_hex'] as String?)
+          : null,
+      executions: List<DlcOrderExecution>.unmodifiable(executions),
     );
   }
 

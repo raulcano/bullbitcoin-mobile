@@ -125,17 +125,7 @@ DlcOrderSummary mergeListOrderWithDlcEnrichment({
   required DlcOrderSummary list,
   required DlcOrderSummary enriched,
 }) {
-  return DlcOrderSummary(
-    orderId: list.orderId,
-    dlcId: list.dlcId,
-    status: list.status,
-    pendingMatchAccept: list.pendingMatchAccept,
-    inFlightPhase: list.inFlightPhase,
-    matchedOrderId: list.matchedOrderId,
-    matchedDlcId: list.matchedDlcId,
-    isMaker: list.isMaker,
-    matchRole: list.matchRole,
-    signRequired: list.signRequired,
+  return list.copyWith(
     dlcStatus: _preferNonEmptyString(list.dlcStatus, enriched.dlcStatus),
     settlementType: _preferNonEmptyString(
       list.settlementType,
@@ -179,32 +169,48 @@ String? _preferNonEmptyString(String? primary, String? fallback) {
 }
 
 DlcOrderSummary _orderSummaryFromCoordinatorJson(Map<String, dynamic> json) {
+  final executions = <DlcOrderExecution>[];
+  final rawExecutions = json['executions'];
+  if (rawExecutions is List) {
+    for (final entry in rawExecutions) {
+      final parsed = DlcOrderExecution.tryFromJson(entry);
+      if (parsed != null) executions.add(parsed);
+    }
+  }
+  final latest = executions.isNotEmpty ? executions.last : null;
+  final topLevelDlcId = (json['dlc_id'] as String?)?.trim();
+  final dlcId = (topLevelDlcId != null && topLevelDlcId.isNotEmpty)
+      ? topLevelDlcId
+      : latest?.dlcId;
+
   return DlcOrderSummary(
     orderId: json['order_id']?.toString() ?? '',
-    dlcId: json['dlc_id'] as String?,
+    dlcId: dlcId,
     status: json['status']?.toString() ?? '',
     pendingMatchAccept: json['pending_match_accept'] == true,
-    matchedOrderId: json['matched_order_id'] as String?,
-    matchedDlcId: json['matched_dlc_id'] as String?,
-    isMaker: json['is_maker'] as bool?,
-    matchRole: json['match_role'] as String?,
+    isMaker: latest?.isMaker ?? json['is_maker'] as bool?,
+    matchRole: latest?.role ?? json['match_role'] as String?,
     signRequired: json['sign_required'] as bool?,
-    dlcStatus: json['dlc_status'] as String?,
+    dlcStatus: (json['dlc_status'] as String?) ?? latest?.dlcStatus,
     settlementType: json['settlement_type'] as String?,
     confirmationStatus: json['confirmation_status'] as String?,
     instrumentId: json['instrument_id'] as String?,
     side: json['side'] as String?,
-    quantity: json['quantity'] is num ? (json['quantity'] as num).toDouble() : null,
+    quantity:
+        json['quantity'] is num ? (json['quantity'] as num).toDouble() : null,
     price: json['price'] is num ? (json['price'] as num).toDouble() : null,
     createdAt: DateTime.tryParse(json['created_at']?.toString() ?? ''),
     sideCollateralSat: null,
     partnerFeeSat: null,
     networkFeeSat: null,
-    lastErrorReason: json['last_error_reason'] as String?,
-    lastErrorMessage: json['last_error_message'] as String?,
+    lastErrorReason:
+        (json['last_error_reason'] as String?) ?? latest?.lastErrorReason,
+    lastErrorMessage:
+        (json['last_error_message'] as String?) ?? latest?.lastErrorMessage,
     oracleOutcomeValue: json['oracle_outcome_value'] as String?,
-    fundingTxid: json['funding_txid'] as String?,
-    closingTxid: json['closing_txid'] as String?,
-    refundTxid: json['refund_txid'] as String?,
+    fundingTxid: (json['funding_txid'] as String?) ?? latest?.fundingTxid,
+    closingTxid: (json['closing_txid'] as String?) ?? latest?.closingTxid,
+    refundTxid: (json['refund_txid'] as String?) ?? latest?.refundTxid,
+    executions: List<DlcOrderExecution>.unmodifiable(executions),
   );
 }

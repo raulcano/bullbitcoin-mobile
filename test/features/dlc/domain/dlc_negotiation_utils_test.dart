@@ -16,8 +16,6 @@ DlcOrderSummary _order({
     dlcId: dlcId,
     status: status,
     pendingMatchAccept: pendingMatchAccept,
-    matchedOrderId: null,
-    matchedDlcId: null,
     isMaker: isMaker,
     matchRole: isMaker == true ? 'maker' : null,
     signRequired: signRequired,
@@ -67,6 +65,72 @@ void main() {
       expect(
         needsDlcTakerAccept(_order(status: 'pending_accept')),
         isTrue,
+      );
+    });
+  });
+
+  group('isDlcTakerForAccept', () {
+    test('true when pending_match_accept is set even without match_role', () {
+      // Coordinators that have not rolled out canonical-DLC `executions[]`
+      // identify the active taker side via `pending_match_accept: true` and
+      // may omit `match_role` / `is_maker` while the order is in
+      // `pending_accept`. The negotiation worker must still fire the accept
+      // flow.
+      expect(
+        isDlcTakerForAccept(
+          _order(status: 'pending_accept', pendingMatchAccept: true),
+        ),
+        isTrue,
+      );
+    });
+
+    test('false for the maker side of an active match', () {
+      // Maker observes `status: pending_accept` but `pending_match_accept`
+      // is false on its own order. Must not trigger /accept-context.
+      expect(
+        isDlcTakerForAccept(
+          _order(
+            status: 'pending_accept',
+            pendingMatchAccept: false,
+            isMaker: true,
+          ),
+        ),
+        isFalse,
+      );
+    });
+
+    test('true when is_maker == false even with stale match_role', () {
+      expect(
+        isDlcTakerForAccept(_order(isMaker: false)),
+        isTrue,
+      );
+    });
+  });
+
+  group('isDlcMakerForSign', () {
+    test('true when sign_required and DLC is accepted (no explicit role)', () {
+      // Maker may briefly lack `match_role` / `is_maker` from the coordinator
+      // while moving past accept; `sign_required: true` is per-wallet and
+      // identifies the maker that owes a /sign-context.
+      expect(
+        isDlcMakerForSign(
+          _order(
+            status: 'filled',
+            dlcStatus: 'accepted',
+            signRequired: true,
+            dlcId: 'dlc-1',
+          ),
+        ),
+        isTrue,
+      );
+    });
+
+    test('false when sign_required is unset', () {
+      expect(
+        isDlcMakerForSign(
+          _order(status: 'filled', dlcStatus: 'accepted', dlcId: 'dlc-1'),
+        ),
+        isFalse,
       );
     });
   });

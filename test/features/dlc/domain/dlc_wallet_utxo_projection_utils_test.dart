@@ -12,8 +12,6 @@ DlcOrderSummary _order({
     dlcId: 'dlc-$orderId',
     status: 'filled',
     pendingMatchAccept: false,
-    matchedOrderId: null,
-    matchedDlcId: null,
     isMaker: true,
     matchRole: 'maker',
     signRequired: false,

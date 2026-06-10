@@ -20,8 +20,6 @@ void main() {
           dlcId: 'd1',
           status: 'filled',
           pendingMatchAccept: false,
-          matchedOrderId: null,
-          matchedDlcId: null,
           isMaker: false,
           matchRole: 'taker',
           signRequired: null,
